@@ -1,0 +1,16 @@
+{
+	"compatible1":	{
+	"mem_malloc_string": "mem_malloc_region",
+	"mem_malloc_str": {
+			"region_count": 0,
+			"mem_region": { "region_1" : ["28", "A7_RTOS_HEAP_SIZE"]}
+		}
+	},
+	"compatible2":	{
+	"dma_malloc_string": "dma_malloc_region",
+	"dma_malloc_str": {
+			"region_count": 1,
+			"mem_region": { "region_1" : ["27", "A7_RTOS_DMA_HEAP_SIZE"]}
+		}
+	}
+}

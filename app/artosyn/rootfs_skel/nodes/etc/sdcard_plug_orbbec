@@ -1,0 +1,13 @@
+#!/bin/sh
+sync
+case $ACTION in
+remove)
+	umount /mnt/sdcard
+	rm -rf /mnt/sdcard
+	;;
+add)
+	cd /mnt
+	mkdir -p sdcard
+	mount /dev/$MDEV /mnt/sdcard
+	;;
+esac

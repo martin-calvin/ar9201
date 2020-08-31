@@ -1,0 +1,10 @@
+#ifndef __TEST_REMOTE_I2C_H__
+#define __TEST_REMOTE_I2C_H__
+
+///////////////////////////////////////////////
+
+#define DEV_REMOTE_I2C_PATH ("/dev/remote_i2c")
+
+///////////////////////////////////////////////
+
+#endif

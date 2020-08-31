@@ -1,0 +1,165 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{7F0E4368-1D1A-4BDA-A8BD-B81F9BC7F203}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>ar_dsp_alg</RootNamespace>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v120</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v120</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <LinkIncremental>true</LinkIncremental>
+    <IncludePath>..\..\win32inc\oncrpc_include;..\..\..\..\..\..\output\staging\target\include;..\..\win32lib\pthreads_compiled;..\..\inc;..\..\win32inc;$(PATH);$(IncludePath)</IncludePath>
+    <LibraryPath>..\..\win32lib\oncrpc_lib;..\..\win32lib;..\..\win32lib\pthreads_compiled;$(PATH);$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <LinkIncremental>false</LinkIncremental>
+    <IncludePath>..\..\win32inc\oncrpc_include;..\..\win32lib\pthreads_compiled;..\..\inc;..\..\win32inc;$(PATH);$(IncludePath)</IncludePath>
+    <LibraryPath>..\..\win32lib\oncrpc_lib;..\..\win32lib;..\..\win32lib\pthreads_compiled;$(PATH);$(LibraryPath)</LibraryPath>
+    <ExecutablePath>$(ExecutablePath)</ExecutablePath>
+    <LibraryWPath>$(LibraryWPath)</LibraryWPath>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <PrecompiledHeader>
+      </PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>oncrpc.lib;pthreadVC2.lib;libartosyn.lib;opencv_ml2413d.lib;opencv_calib3d2413d.lib;opencv_contrib2413d.lib;opencv_core2413d.lib;opencv_features2d2413d.lib;opencv_flann2413d.lib;opencv_gpu2413d.lib;opencv_highgui2413d.lib;opencv_imgproc2413d.lib;opencv_legacy2413d.lib;opencv_objdetect2413d.lib;opencv_ts2413d.lib;opencv_video2413d.lib;opencv_nonfree2413d.lib;opencv_ocl2413d.lib;opencv_photo2413d.lib;opencv_stitching2413d.lib;opencv_superres2413d.lib;opencv_videostab2413d.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <PrecompiledHeader>
+      </PrecompiledHeader>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalDependencies>oncrpc.lib;pthreadVC2.lib;libartosyn.lib;opencv_objdetect2413.lib;opencv_ts2413.lib;opencv_video2413.lib;opencv_nonfree2413.lib;opencv_ocl2413.lib;opencv_photo2413.lib;opencv_stitching2413.lib;opencv_superres2413.lib;opencv_videostab2413.lib;opencv_calib3d2413.lib;opencv_contrib2413.lib;opencv_core2413.lib;opencv_features2d2413.lib;opencv_flann2413.lib;opencv_gpu2413.lib;opencv_highgui2413.lib;opencv_imgproc2413.lib;opencv_legacy2413.lib;opencv_ml2413.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(PATH);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <Text Include="ReadMe.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv2\calib3d.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv2\core.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv2\features2d.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv2\flann.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv2\highgui.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv2\imgproc.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv2\ml.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv2\objdetect.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv2\opencv.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv2\opencv_modules.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv2\photo.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv2\stitching.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv2\superres.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv2\ts.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv2\video.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv2\videostab.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv\cv.h" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv\cv.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv\cvaux.h" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv\cvaux.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv\cvwimage.h" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv\cxcore.h" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv\cxcore.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv\cxeigen.hpp" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv\cxmisc.h" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv\highgui.h" />
+    <ClInclude Include="..\..\..\..\..\..\..\..\opencv\build\include\opencv\ml.h" />
+    <ClInclude Include="..\..\..\..\..\..\output\staging\target\include\icc_proxy_rpc_to_linux.h" />
+    <ClInclude Include="..\..\inc\ar_dsp_alg.h" />
+    <ClInclude Include="..\..\inc\minGlue-ccs.h" />
+    <ClInclude Include="..\..\inc\minGlue-efsl.h" />
+    <ClInclude Include="..\..\inc\minGlue-FatFs.h" />
+    <ClInclude Include="..\..\inc\minGlue-ffs.h" />
+    <ClInclude Include="..\..\inc\minGlue-mdd.h" />
+    <ClInclude Include="..\..\inc\minGlue-stdio.h" />
+    <ClInclude Include="..\..\inc\minGlue.h" />
+    <ClInclude Include="..\..\inc\minIni.h" />
+    <ClInclude Include="..\..\inc\wxMinIni.h" />
+    <ClInclude Include="..\..\win32inc\ar_alg.h" />
+    <ClInclude Include="..\..\win32inc\ar_alg_define.h" />
+    <ClInclude Include="..\..\win32inc\ar_dsp_rpc.h" />
+    <ClInclude Include="..\..\win32inc\ar_icc.h" />
+    <ClInclude Include="..\..\win32inc\ar_img_api.h" />
+    <ClInclude Include="..\..\win32inc\ar_ion.h" />
+    <ClInclude Include="..\..\win32inc\ar_system.h" />
+    <ClInclude Include="..\..\win32inc\comp_osd.h" />
+    <ClInclude Include="..\..\win32inc\dirent.h" />
+    <ClInclude Include="..\..\win32inc\icc_proxy_rpc_def.h" />
+    <ClInclude Include="..\..\win32inc\icc_proxy_rpc_to_linux.h" />
+    <ClInclude Include="..\..\win32inc\ion.h" />
+    <ClInclude Include="..\..\win32inc\ion_linux.h" />
+    <ClInclude Include="stdafx.h" />
+    <ClInclude Include="targetver.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\src\ar_dsp_common.cpp" />
+    <ClCompile Include="..\..\src\ar_face_detect_mtcnn.cpp" />
+    <ClCompile Include="..\..\src\ar_face_detect_recognize.cpp" />
+    <ClCompile Include="..\..\src\ar_get_img_list.cpp" />
+    <ClCompile Include="..\..\src\ar_network_evaluation.cpp" />
+    <ClCompile Include="..\..\src\ar_std_mobilenet_ssd.cpp" />
+    <ClCompile Include="..\..\src\main.cpp" />
+    <ClCompile Include="..\..\src\minIni.c" />
+    <ClCompile Include="stdafx.cpp" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

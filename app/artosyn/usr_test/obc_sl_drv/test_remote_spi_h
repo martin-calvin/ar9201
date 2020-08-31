@@ -1,0 +1,16 @@
+#ifndef __TEST_REMOTE_SPI_H__
+#define __TEST_REMOTE_SPI_H__
+#ifdef __cplusplus
+#if __cplusplus
+extern "C" {
+#endif
+#endif /* __cplusplus */
+
+#define DEV_REMOTE_SPI_PATH ("/dev/remote_spi")
+
+#ifdef __cplusplus
+#if __cplusplus
+}
+#endif
+#endif /* __cplusplus */
+#endif

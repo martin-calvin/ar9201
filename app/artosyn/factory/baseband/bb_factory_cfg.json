@@ -1,0 +1,345 @@
+{
+
+	"SN": ["0x01", "0x00", "0x00", "0x00"],
+	"bb_mac_config": {
+		"bb_mac_addr": ["0xAA", "0xBB","0xCC","0xFF","0x11","0x22","0x33","0x99"]
+	},
+
+	"bb_rf_config": {	
+		"rf_init_reg": [
+			"0x7C","0x00","0x00","0xC0","0x00","0x00","0x00","0x00","0x3C","0x00","0x00","0x00","0x3C","0x00","0x00","0x00",
+			"0x00","0x80","0xa0","0x74","0x60","0x50","0x00","0x00","0x00","0x00","0x00","0x00","0x00","0x4F","0x00","0x00",
+			"0x00","0x40","0x40","0x48","0x00","0x54","0x00","0x00","0x00","0x00","0x10","0x00","0x1F","0x00","0x10","0x0F",
+			"0x1F","0x00","0x28","0x40","0x00","0xB0","0xE0","0x00","0x37","0x00","0x14","0x00","0x13","0xC0","0x44","0x01",
+			"0x7C","0x00","0x00","0x23","0x00","0x87","0x80","0x74","0x74","0x00","0x00","0x00","0x00","0x10","0x10","0x88",
+			"0x00","0x00","0xCC","0x00","0x00","0x00","0x00","0x00","0x00","0x00","0x00","0x00","0xA0","0x00","0x00","0x00",
+			"0x00","0x00","0x00","0x00","0x00","0x40","0x10","0x10","0x00","0x00","0xAD","0xAD","0x5E","0x00","0x00","0x00",
+			"0x00","0x00","0x00","0x00","0x00","0x00","0x00","0x00","0x00","0x00","0x00","0x00","0x00","0x01","0x37","0x01"
+		]
+	},
+
+	"bb_sys_init_config": {	
+
+		"sys_init_cfg_t":{
+			"slot_pkg_len_t":    "0:OFDM_6  1:OFDM_12 2:OFDM_18 3:OFDM_24 4:OFDM_48 5:OFDM_96",
+			"slot_ofdm_num_t":   "0:TINTLV_MODE_0 1:TINTLV_MODE_1 2:TINTLV_MODE_2 3:TINTLV_MODE_3 4:TINTLV_MODE_4 5:TINTLV_MODE_5 6:TINTLV_MODE_6,7:TINTLV_MODE_7",
+			"slot_bw_t":         "0:_1_25_MHZ  1:_2_5_MHZ 2:_5_MHZ 3:_10_MHZ 4:_20_MHZ 5:_40_MHZ",
+			"slot_tx_rx_mode_t": "0:TX1_RX1_0 1:TX1_RX1_1 2:TX1_RX2 3:TX1_RX4 4:TX2_RX2_0 5:TX2_RX2_1 6:TX2_RX4_0 7:TX2_RX4_1",
+			"br_bw_t":           "0:_1_25_MHZ  1:_2_5_MHZ 2:_5_MHZ 3:_10_MHZ 4:_20_MHZ 5:_40_MHZ",
+			"br_pkg_len_t":      "0:OFDM_6  1:OFDM_12 2:OFDM_18 3:OFDM_24 4:OFDM_48 5:OFDM_96",
+			"br_cr_t":           "0:BR_CR_1_2  1:BR_CR_2_3",
+			"br_rep_t":          "0:REPEAT_MODE_0 1:REPEAT_MODE_1 2:REPEAT_MODE_2 3:REPEAT_MODE_3 4:REPEAT_MODE_4 5:REPEAT_MODE_5 6:REPEAT_MODE_6 7:REPEAT_MODE_7",
+			"br_qam_t":          "0:BPSK  1:QPSK 2:QAM_16 3:QAM_64 4:QAM_256",
+			"br_tx_rx_mode_t":   "0:TX1_RX1_0 1:TX1_RX1_1 2:TX1_RX2 3:TX1_RX4 4:TX2_RX2_0 5:TX2_RX2_1 6:TX2_RX4_0 7:TX2_RX4_1",
+			"csma_rep_t":        "0:REPEAT_MODE_0 1:REPEAT_MODE_1 2:REPEAT_MODE_2 3:REPEAT_MODE_3 4:REPEAT_MODE_4 5:REPEAT_MODE_5 6:REPEAT_MODE_6 7:REPEAT_MODE_7",
+			"csma_pkg_len_t":    "0:OFDM_6  1:OFDM_12 2:OFDM_18 3:OFDM_24 4:OFDM_48 5:OFDM_96",
+			"mcs_mode":          "0:AUTO 1:MANUAL",
+			"mode_b setting0":    "OFDM_96 TINTLV_MODE_6 _40_MHZ TX2_RX4_0 TX1_RX2",
+			"mode_b setting1":    "OFDM_48 TINTLV_MODE_5 _20_MHZ TX2_RX4_0 TX1_RX2"
+		},
+		
+		"sys_mode_sel": {
+			"sys_mode": 0
+	  	},
+  		"sys_init_cfg_mod_b_7p1": {		
+			"slot_pkg_len": 4,
+			"slot_ofdm_num":6,
+			"slot_bw": 4,
+			"slot_tx_rx_mode": 2,
+			"br_bw": 2,
+			"br_pkg_len": 0,
+			"br_cr": 0,
+			"br_rep": 2,
+			"br_qam": 0,
+			"br_tx_rx_mode":2,
+			"mcs_mode": 0
+	  	},
+  		"sys_init_cfg_mod_b_12p7": {		
+  			"slot_pkg_len": 5,
+  			"slot_ofdm_num":6,
+  			"slot_bw": 4,
+  			"slot_tx_rx_mode": 2,
+  			"br_bw": 2,
+  			"br_pkg_len": 1,
+  			"br_cr": 0,
+  			"br_rep": 2,
+  			"br_qam": 0,
+  			"br_tx_rx_mode":2,
+  			"mcs_mode": 0
+  		},
+  		"sys_init_cfg_mod_d": {
+  			"slot_pkg_len": 3,
+  			"slot_ofdm_num":6,
+  			"slot_bw": 5,
+  			"slot_tx_rx_mode": 2,
+  			"br_bw": 2,
+  			"br_pkg_len": 2,
+  			"br_cr": 0,
+  			"br_rep": 2,
+  			"br_qam": 0,
+  			"br_tx_rx_mode":2,
+  			"mcs_mode": 0,
+  			
+  			"csma_rep": 0,
+  			"csma_pkg_len": 0
+  		},
+  		"bb_default_config": {
+  			"help": " main_chan (0 ~ max_in_freq_table) ,if(main_chn == 255) firmware will swee freq and choose the best band br_hop_mode : 0:AUTO_MODE  1:MANUAL_MODE main_hop_mode: 0:AUTO_MODE  1:MANUAL_MODE",
+  			"main_chan": 255,
+  			"br_hop_mode": 0,
+  			"main_hop_mode": 0
+  		}
+	},
+
+
+	"bb_chan_config": {
+		"slot_2_4_g_40m_freq_num": 5,
+		"slot_2_4_g_40m_freq_table": [2422000, 2430000, 2438000, 2446000, 2454000 ],
+		
+		"slot_5_8_g_40m_freq_num": 14,
+		"slot_5_8_g_40m_freq_table": [5180000, 5220000, 5260000, 5300000, 5340000, 5490000, 5530000, 
+									  5570000, 5610000, 5650000, 5690000, 5730000, 5770000, 5830000 ],
+		"slot_2_4_g_20m_freq_num": 7,							  
+		"slot_2_4_g_20m_freq_table": [2414000, 2422000, 2430000, 2438000, 2446000, 2454000, 2462000 ],
+		
+		"slot_5_8_g_20m_freq_num": 7,
+		"slot_5_8_g_20m_freq_table": [ 5170000, 5210000, 5230000, 5740000, 5760000, 5780000, 5820000 ],		
+		"slot_2_4_g_10m_freq_num": 0,
+		"slot_2_4_g_10m_freq_table": [  ],
+		
+		"slot_5_8_g_10m_freq_num": 0,
+		"slot_5_8_g_10m_freq_table": [  ]
+	},
+
+	"bb_mcs_judge_config": {
+		
+		"average_judge_cycle" : 7,
+		"average_judge_cycle_note": "average_judge_cycle,unit (ms); 2 in one frame(12.7ms) = 6",
+		
+		"snr_average_calc_num" : 4,
+		"snr_average_calc_num_note": "1 <=snr_average_calc_num <= 8",
+		
+		"qam_snr_threshold": {
+			"MCS0"  : ["0x0",   "0x80"  ], 
+			"MCS1"  : ["0x64",  "0x120" ],
+			"MCS2"  : ["0xcf",  "0x329" ],
+			"MCS3"  : ["0x280", "0xa00" ],
+			"MCS4"  : ["0x8df", "0x1220"],
+			"MCS5"  : ["0xd82", "0xffff"],
+			"note"  : "qam_snr_threshold , value of bb_snr_reg"
+			},
+			
+		"snr_down_cnt_threshold": {
+			"MCS1"  : 42,
+			"MCS2"  : 35,
+			"MCS3"  : 28,
+			"MCS4"  : 14,
+			"MCS5"  : 14,
+			"note"  : "snr_down_cnt_threshold , unit (ms)"		
+		},	
+		
+		"snr_up_cnt_threshold": {
+			"MCS0"  : 3000,
+			"MCS1"  : 2000,
+			"MCS2"  : 2000,
+			"MCS3"  : 2000,
+			"MCS4"  : 2500,
+			"note"  : "snr_up_cnt_threshold , unit (ms)"	
+		},	
+		
+		"qam_ldpc_fraction_up": {
+			"MCS0"  : [0, 20, 100 ],
+			"MCS1"  : [1, 10, 100 ],
+			"MCS2"  : [2, 10, 100 ],
+			"MCS3"  : [3, 5 , 100 ],
+			"MCS4"  : [4, 5 , 100 ]
+		},
+			
+		"qam_ldpc_fraction_down": {
+			"MCS1"  : [1, 50, 100 ],
+			"MCS2"  : [2, 30, 100 ],
+			"MCS3"  : [3, 30, 100 ],
+			"MCS4"  : [4, 25, 100 ],
+			"MCS5"  : [5, 20, 100 ]
+		},
+			
+		"qam_ldpc_judge_cnt": {
+			"ldpc_judge_cnt"   : 300,
+			"note"             : "qam_ldpc_judge_cnt , unit (ms)"		
+		}
+  },
+	"bb_mcs_config": {
+		"mcs_map_cfg": {
+			"mcs_map_cfg_t":"value1:0:BPSK  1:QPSK 2:QAM_16 3:QAM_64 4:QAM_256  value2:0:SLOT_CR_1_2 1:SLOT_CR_2_3_A 2:SLOT_CR_2_3_B 3:SLOT_CR_3_4_A 4:SLOT_3_4_B 5: SLOT_5_6 value3:0:REPEAT_MODE_0 1:REPEAT_MODE_1 2:REPEAT_MODE_2 3:REPEAT_MODE_3 4:REPEAT_MODE_4 5:REPEAT_MODE_5 6:REPEAT_MODE_6 7:REPEAT_MODE_7",
+			"MCS0"  : [0, 0, 3], 
+			"MCS1"  : [0, 0, 0],
+			"MCS2"  : [1, 0, 0],
+			"MCS3"  : [2, 0, 0],
+			"MCS4"  : [3, 0, 0],
+			"MCS5"  : [3, 1, 0]
+		},
+		"modeb_mcs_table_20m_hw_v1p0":{
+			"mcs_num" : 4,
+			"mcs_table" : [1, 2, 3, 4]
+		},
+
+		"modeb_mcs_table_20m_hw_v1p2":{
+			"mcs_num" : 5,
+			"mcs_table" : [1, 2, 3, 4,5]
+		},
+
+		"modeb_mcs_table_40m":{
+			"mcs_num" : 5,
+			"mcs_table" : [1, 2, 3, 4, 5 ]
+		},
+
+		"moded_mcs_table_20m":{
+			"mcs_num" : 3,
+			"mcs_table" : [3, 4, 5 ]
+		},
+		"moded_mcs_table_40m":{
+			"mcs_num" : 4,
+			"mcs_table" : [2, 3, 4, 5 ]
+		}
+	},
+	"bb_power_ctrl_config":	{
+		"mode": 1,
+		"powerAutoCtrl": 0,
+		"rf_power_set":  17,
+		"rf_gain_range": 16,
+
+		"st_5g_slot_PowerClose_fem8575": {
+					"0dbm"  : ["0x12", "0x2800", 60],
+					"1dbm"  : ["0x12", "0x2800", 60],
+				    "2dbm"  : ["0x12", "0x3c00", 60],
+		            "3dbm"  : ["0x12", "0x3c00", 60],
+					"4dbm"  : ["0x12", "0x3c00", 60],
+					"5dbm"  : ["0x12", "0x3c00", 60],
+					"6dbm"  : ["0x12", "0x3C00", 60],
+					"7dbm"  : ["0x12", "0x3C00", 200],
+					"8dbm"  : ["0x12", "0x3C00", 200],
+					"9dbm"  : ["0x12", "0x3C00", 200],
+					"10dbm" : ["0x12", "0x3C00", 200],
+					"11dbm" : ["0x12", "0x4100", 200],
+					"12dbm" : ["0x12", "0x4600", 200],
+					"13dbm" : ["0x12", "0x4a00", 200],
+					"14dbm" : ["0x12", "0x5000", 200],
+					"15dbm" : ["0x12", "0x5500", 150],
+					"16dbm" : ["0x12", "0x5a00", 158],
+					"17dbm" : ["0x12", "0x5f00", 200],
+					"18dbm" : ["0x12", "0x6500", 200],
+					"19dbm" : ["0x12", "0x6a00", 200],
+					"20dbm" : ["0x12", "0x7000", 200],
+					"21dbm" : ["0x12", "0x7500", 200],
+					"22dbm" : ["0x12", "0x7a00", 200],
+					"23dbm" : ["0x12", "0x7f00", 228],
+					"24dbm" : ["0x12", "0x8500", 200],
+					"25dbm" : ["0x12", "0x8900", 200],
+					"26dbm" : ["0x12", "0x8900", 200],
+					"27dbm" : ["0x12", "0x8900", 200],
+					"28dbm" : ["0x12", "0x8900", 200],
+					"29dbm" : ["0x12", "0x8900", 200],
+					"30dbm" : ["0x12", "0x8900", 200] 
+		},
+		"st_5g_br_PowerClose_fem8575": {
+					"0dbm"  : ["0x12", "0x2800", 60],
+					"1dbm"  : ["0x12", "0x2800", 60],
+					"2dbm"  : ["0x12", "0x3a00", 60],
+					"3dbm"  : ["0x12", "0x3a00", 60],
+					"4dbm"  : ["0x12", "0x3a00", 60],
+					"5dbm"  : ["0x12", "0x3a00", 60],
+					"6dbm"  : ["0x12", "0x3a00", 60],
+					"7dbm"  : ["0x12", "0x3a00", 200],
+					"8dbm"  : ["0x12", "0x3a00", 200],
+					"9dbm"  : ["0x12", "0x3a00", 200],
+					"10dbm" : ["0x12", "0x3a00", 200],
+					"11dbm" : ["0x12", "0x3e00", 200],
+					"12dbm" : ["0x12", "0x4300", 200],
+					"13dbm" : ["0x12", "0x4700", 200],
+					"14dbm" : ["0x12", "0x4d00", 200],
+					"15dbm" : ["0x12", "0x5200", 150],
+					"16dbm" : ["0x12", "0x5600", 158],
+					"17dbm" : ["0x12", "0x5c00", 200],
+					"18dbm" : ["0x12", "0x6000", 200],
+					"19dbm" : ["0x12", "0x6500", 200],
+					"20dbm" : ["0x12", "0x6b00", 200],
+					"21dbm" : ["0x12", "0x7000", 200],
+					"22dbm" : ["0x12", "0x7500", 200],
+					"23dbm" : ["0x12", "0x7a00", 228],
+					"24dbm" : ["0x12", "0x7f00", 200],
+					"25dbm" : ["0x12", "0x8500", 200],
+					"26dbm" : ["0x12", "0x8500", 200],
+					"27dbm" : ["0x12", "0x8500", 200],
+					"28dbm" : ["0x12", "0x8500", 200],
+					"29dbm" : ["0x12", "0x8500", 200],
+					"30dbm" : ["0x12", "0x8500", 200] 
+		},
+		"st_5g_slot_PowerClose_fem85743": {
+					"0dbm"  : ["0x19", "0x2800", 60],
+					"1dbm"  : ["0x19", "0x2800", 60],
+					"2dbm"  : ["0x19", "0x2800", 60],
+					"3dbm"  : ["0x19", "0x2800", 60],
+					"4dbm"  : ["0x19", "0x2800", 60],
+					"5dbm"  : ["0x19", "0x2900", 60],
+					"6dbm"  : ["0x19", "0x2b00", 60],
+					"7dbm"  : ["0x19", "0x2d00", 200],
+					"8dbm"  : ["0x19", "0x2f00", 200],
+					"9dbm"  : ["0x19", "0x3100", 200],
+					"10dbm" : ["0x19", "0x3300", 200],
+					"11dbm" : ["0x12", "0x3500", 200],
+					"12dbm" : ["0x12", "0x3700", 200],
+					"13dbm" : ["0x12", "0x3900", 200],
+					"14dbm" : ["0x12", "0x3a00", 200],
+					"15dbm" : ["0x12", "0x3c00", 150],
+					"16dbm" : ["0x12", "0x3e00", 158],
+					"17dbm" : ["0x12", "0x4000", 200],
+					"18dbm" : ["0x12", "0x4000", 200],
+					"19dbm" : ["0x12", "0x4000", 200],
+					"20dbm" : ["0x12", "0x4000", 200],
+					"21dbm" : ["0x12", "0x4000", 200],
+					"22dbm" : ["0x12", "0x4000", 200],
+					"23dbm" : ["0x12", "0x4000", 228],
+					"24dbm" : ["0x12", "0x4000", 200],
+					"25dbm" : ["0x12", "0x4000", 200],
+					"26dbm" : ["0x12", "0x4000", 200],
+					"27dbm" : ["0x12", "0x4000", 200],
+					"28dbm" : ["0x12", "0x4000", 200],
+					"29dbm" : ["0x12", "0x4000", 200],
+					"30dbm" : ["0x12", "0x4000", 200] 
+		},		
+		"st_5g_br_PowerClose_fem85743": {
+					"0dbm"  : ["0x19", "0x2800", 60],
+					"1dbm"  : ["0x19", "0x2800", 60],
+					"2dbm"  : ["0x19", "0x2800", 60],
+					"3dbm"  : ["0x19", "0x2800", 60],
+					"4dbm"  : ["0x19", "0x2800", 60],
+					"5dbm"  : ["0x19", "0x2900", 60],
+					"6dbm"  : ["0x19", "0x2b00", 60],
+					"7dbm"  : ["0x19", "0x2d00", 200],
+					"8dbm"  : ["0x19", "0x2f00", 200],
+					"9dbm"  : ["0x19", "0x3100", 200],
+					"10dbm" : ["0x19", "0x3300", 200],
+					"11dbm" : ["0x12", "0x3500", 200],
+					"12dbm" : ["0x12", "0x3700", 200],
+					"13dbm" : ["0x12", "0x3900", 200],
+					"14dbm" : ["0x12", "0x3a00", 200],
+					"15dbm" : ["0x12", "0x3c00", 150],
+					"16dbm" : ["0x12", "0x3e00", 158],
+					"17dbm" : ["0x12", "0x4000", 200],
+					"18dbm" : ["0x12", "0x4000", 200],
+					"19dbm" : ["0x12", "0x4000", 200],
+					"20dbm" : ["0x12", "0x4000", 200],
+					"21dbm" : ["0x12", "0x4000", 200],
+					"22dbm" : ["0x12", "0x4000", 200],
+					"23dbm" : ["0x12", "0x4000", 228],
+					"24dbm" : ["0x12", "0x4000", 200],
+					"25dbm" : ["0x12", "0x4000", 200],
+					"26dbm" : ["0x12", "0x4000", 200],
+					"27dbm" : ["0x12", "0x4000", 200],
+					"28dbm" : ["0x12", "0x4000", 200],
+					"29dbm" : ["0x12", "0x4000", 200],
+					"30dbm" : ["0x12", "0x4000", 200] 
+		}
+	}
+}
+
