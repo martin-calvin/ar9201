@@ -97,6 +97,8 @@ extern int ob_util_get_bit_8(unsigned char buff, int n);
 
 
 extern int ob_util_dumpToFile(const char *buf, int size, char *filename);
+extern int ob_util_force_create_dir(const char *dirname);
+
 
 extern int start_new_thread(const char *pThdName, pthread_t *pThdId, THREAD_FUNC pThdFunc, void *arg);
 extern int start_new_thread_join(const char *pThdName, pthread_t *pThdId, THREAD_FUNC pThdFunc, void *arg);

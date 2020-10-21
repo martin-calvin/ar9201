@@ -22,13 +22,12 @@
 #ifndef __LOGUTIL_H__
 #define __LOGUTIL_H__
 
-
+#include "zlog.h"
 #ifdef __cplusplus
 #if __cplusplus
 extern "C"{
 #endif
 #endif /* __cplusplus */
-
 
 /*==============================================*
  *      include header files                    *
@@ -46,32 +45,32 @@ extern "C"{
         
 #define DBG(fmt, args...) \
                 do { \
-                    fprintf(stderr, "[DEBUG] %s(%d) " fmt, __FUNCTION__, __LINE__, ##args); \
+                       zlog_debug(zlog_category,"" fmt,##args); \    
                 } while (0)
         
 #define INFO(fmt, args...) \
                 do { \
-                    fprintf(stderr, "[INFO] %s(%d) " fmt, __FUNCTION__, __LINE__, ##args); \
+                       zlog_info(zlog_category,"" fmt,##args); \
                 } while (0)
         
 #define NOTICE(fmt, args...) \
                 do { \
-                    fprintf(stderr, "[NOTICE] %s(%d) " fmt, __FUNCTION__, __LINE__, ##args); \
+                       zlog_notice(zlog_category,"" fmt,##args); \
                 } while (0)
         
 #define WARN(fmt, args...) \
                 do { \
-                    fprintf(stderr, "[WARN] %s(%d) " fmt, __FUNCTION__, __LINE__, ##args); \
+                       zlog_warn(zlog_category,"" fmt,##args); \
                 } while (0)
         
 #define ERR(fmt, args...) \
                 do { \
-                    fprintf(stderr, "[ERROR] %s(%d) " fmt, __FUNCTION__, __LINE__, ##args); \
+                       zlog_error(zlog_category,"" fmt,##args); \
                 } while (0)
         
 #define FATAL(fmt, args...) \
                 do { \
-                    fprintf(stderr, "[FATAL] %s(%d) " fmt, __FUNCTION__, __LINE__, ##args); \
+                       zlog_debug(zlog_category,"" fmt,##args); \
                 } while (0)
         
 #else

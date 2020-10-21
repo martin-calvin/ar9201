@@ -117,6 +117,13 @@ static const char *pTofStreamManageStr[MSG_TOF_STREAM_MAX] =
  *      routines' or functions' implementations *
  *----------------------------------------------*/
 
+extern "C"{
+bool get_softfilter_status(void)
+{
+    return ob_streamControl.softfilter_Param.softfilterEnable;
+}
+}
+
 /*****************************************************************************
 *   Prototype    : ob_tof_stream_get_handle
 *   Description  : orbbec tof stream 操作句柄建立/获取
@@ -215,6 +222,7 @@ static void image_save(const void *p, int size, int image_count)
         fclose(fp);
         saveCount++;
         free(irBuf);
+        INFO("save %s image done!\n", file_name);
     }
 }
 /*****************************************************************************
@@ -547,7 +555,7 @@ static int orbbec_softfiter_process(uint16_t *process_buf, int width,
     memcpy(softfiter_buf, process_buf, width * height * 2);
 
     softfilter(middle_buf, softfiter_buf, width, height,
-               softfilter_Param.maxDiff, softfilter_Param.maxSpeckleSize, softfilter_Param.newVal);
+               softfilter_Param.maxDiff, softfilter_Param.maxSpeckleSize, 1);
 
     memcpy(process_buf, softfiter_buf, width * height * 2);
 
@@ -565,7 +573,7 @@ static int Disparity2DepthParam_init(OBDepthProcessParameter *DepthProcessParame
     BaselineCalibrationPara BaselineCali;
 
     //FILE *Param_data = fopen("./BaselineCali.bin", "rb");
-    FILE *Param_data = fopen("/factory/doraemon/distortion_d2c4x3.bin", "rb");
+    FILE *Param_data = fopen(cfgParameter_960_1280, "rb");
     float sensor_fx = 0;
     if (Param_data == NULL)
     {
@@ -638,6 +646,8 @@ static void *ob_mx6300_depth_stream_process_thd(void *arg)
         return NULL;
     }
 
+    uint8_t depth_loopCount = 0;
+
     tv.tv_sec = 0;
     tv.tv_usec = 10000;
 
@@ -649,19 +659,29 @@ static void *ob_mx6300_depth_stream_process_thd(void *arg)
 
     //ob_streamControl.depth_inputImage_width = 1024;
     //ob_streamControl.depth_inputImage_height = 1280;
-
-    ob_streamControl.depthSoftFilter_enable = false;
-    ob_streamControl.depth_MinValue = 0;
-    ob_streamControl.depth_MaxValue = 10000;
+    
+    ob_streamControl.depth_MinValue = 450;
+    ob_streamControl.depth_MaxValue = 3500;
 
     // ob_streamControl.depthSoftD2C_enable = 1;//这个由上位机下发
 
-    OBDepthProcessParameter *DepthProcessParameter = (OBDepthProcessParameter *)malloc(sizeof(OBDepthProcessParameter));
+    OBDepthProcessParameter *DepthProcessParameter =
+        (OBDepthProcessParameter *)malloc(sizeof(OBDepthProcessParameter));
+    if (DepthProcessParameter == NULL)
+    {
+        ERR("DepthProcessParameter malloc failed!\n");
+        return NULL;
+    }
     Disparity2DepthParam_init(DepthProcessParameter);
-    
-    libobsensor::Disparity2Depth *ob_Disparity2Depth =
-        new libobsensor::Disparity2Depth(DepthProcessParameter->disparityParameter_, DepthProcessParameter->isDualCamera);
 
+    libobsensor::Disparity2Depth *ob_Disparity2Depth =
+        new libobsensor::Disparity2Depth(DepthProcessParameter->disparityParameter_,
+                                         DepthProcessParameter->isDualCamera);
+    if (ob_Disparity2Depth == NULL)
+    {
+        ERR("ob_Disparity2Depth malloc failed!\n");
+        return NULL;
+    }
     ob_Disparity2Depth->init(OB_FORMAT_NV12);
 
 
@@ -686,9 +706,6 @@ static void *ob_mx6300_depth_stream_process_thd(void *arg)
     INFO("softfilter version:%d.%d.%d.%d\n", version.major, version.minor, version.maintenance, version.build);
 #endif
 
-    softfilter_Param.maxDiff = 16;
-    softfilter_Param.maxSpeckleSize = 480;
-    softfilter_Param.newVal = 0;
 
     sem_wait(&pHandler->semDepthConsumeProcessStart);
 
@@ -702,8 +719,20 @@ static void *ob_mx6300_depth_stream_process_thd(void *arg)
     INFO("curr depth_in format:%d(w) * %d(h)\n",depth_in_w, depth_in_h);
     INFO("curr uvc_send format:%d(w) * %d(h)\n",depth_out_w, depth_out_h);
 
-    uint8_t *D2C_buf = (uint8_t *)ion_mem_info[TOF_depth0_MEM].va;//d2c之后数据直接输出到ION内存[目前固定]
-    uint8_t *depthBuf = (uint8_t *)ion_mem_info[TOF_phase_low_nshl_MEM].va;//视差转深度运算结果直接存ion内存
+    param_ion_mellc_t *depthBuf_0 = (param_ion_mellc_t *)&ion_mem_info[D2C_input_buf_0];
+    param_ion_mellc_t *depthBuf_1 = (param_ion_mellc_t *)&ion_mem_info[D2C_input_buf_1];
+    param_ion_mellc_t *depthBuf_2 = (param_ion_mellc_t *)&ion_mem_info[D2C_input_buf_2];
+    param_ion_mellc_t *depthBuf_3 = (param_ion_mellc_t *)&ion_mem_info[D2C_input_buf_3];
+
+
+    ar_picture_buffer_t *depth_queue = (ar_picture_buffer_t *)malloc(sizeof(ar_picture_buffer_t));
+    if (depth_queue == NULL)
+    {
+        ERR("depth_queue malloc error!\n");
+        return NULL;
+    }
+    memset(depth_queue, 0, sizeof(ar_picture_buffer_t));
+
 
     while (pHandler->bDepthConsumeRunFlag)
     {
@@ -711,73 +740,78 @@ static void *ob_mx6300_depth_stream_process_thd(void *arg)
         // t1 = tv.tv_sec * 1000000ULL + tv.tv_usec;
 
         ObTofFrame *pFrame = pHandler->pRawDataQueue->queue_wait_and_pop();
-        
+        u32 pts = pFrame->pts;
+
         if (pFrame->pRawBuff->mem[0].len > 0)
         {
             /*视差转深度*/
             uint8_t *DisparityBuf = (uint8_t *)pFrame->pRawBuff->mem[0].addr;//视差直接从rtosbuffer中拿
 #if 1 // 使用老的查找表
-            ob_Disparity2Depth->depth_processFrame((uint16_t *)DisparityBuf, (uint16_t *)depthBuf, depth_in_len);
-            
-            // gettimeofday(&tv, NULL);
-            // t2 = tv.tv_sec * 1000000ULL + tv.tv_usec;
-            // INFO("depth_processFrame cost time %lluus\n",t2-t1);
+            switch (depth_loopCount)
+            {
+                case 0:
+                    ob_Disparity2Depth->depth_processFrame((uint16_t *)DisparityBuf,
+                                                        (uint16_t *)depthBuf_0->va, depth_in_len);
+                    depth_queue->mem[0].addr = (uint32_t)depthBuf_0;
+                    depth_queue->mem[0].len = depth_in_len;
+                    depth_loopCount = 1;
+                    break;
+                case 1:
+                    ob_Disparity2Depth->depth_processFrame((uint16_t *)DisparityBuf,
+                                                        (uint16_t *)depthBuf_1->va, depth_in_len);
+                    depth_queue->mem[0].addr = (uint32_t)depthBuf_1;
+                    depth_queue->mem[0].len = depth_in_len;
+                    depth_loopCount = 2;
+                    break;
+                case 2:
+                    ob_Disparity2Depth->depth_processFrame((uint16_t *)DisparityBuf,
+                                                        (uint16_t *)depthBuf_2->va, depth_in_len);
+                    depth_queue->mem[0].addr = (uint32_t)depthBuf_2;
+                    depth_queue->mem[0].len = depth_in_len;
+                    depth_loopCount = 3;
+                    break;
+                case 3:
+                    ob_Disparity2Depth->depth_processFrame((uint16_t *)DisparityBuf,
+                                                        (uint16_t *)depthBuf_3->va, depth_in_len);
+                    depth_queue->mem[0].addr = (uint32_t)depthBuf_3;
+                    depth_queue->mem[0].len = depth_in_len;
+                    depth_loopCount = 0;
+                    break;
+                default:
+                    break;
+            }
+
 #else // 使用新的视差计算方法
             pParaHandle Pdpara = get_disparity2depthPara_handle();
             Pdpara->nMaxDepth = 8000;//如需修改直接在这里修改参数
             // Dispar2Depth((uint16_t *)(pFrame->pRawBuff->mem[0].addr), depth_in_len/2, (uint16_t *)depthBuf);
             Disparity2Depth_ArmNeon((uint16_t *)(pFrame->pRawBuff->mem[0].addr), depth_in_len/2, (uint16_t *)depthBuf);
-#endif
-#if 0
-            if (ob_streamControl.depthSoftD2C_enable)
-            {   
-                ob_D2C_DSP_process(depthBuf, depth_in_w, depth_in_h, D2C_buf, depth_out_w, depth_out_h);
-                // gettimeofday(&tv, NULL);
-                // t3 = tv.tv_sec * 1000000ULL + tv.tv_usec;
-                // INFO("ob_D2C_DSP_process cost time %lluus\n",t3-t2);
-                if (uvc_video_send_process(pService->dev, D2C_buf, depth_out_len, pFrame->pRawBuff->pts) < 0)
-                {
-                    // ERR("uvc send depth data failed.\n");
-                }
-                //测试dsp输出buffer，每次用完arm端清空一次
-                // memset(D2C_buf, 0, depth_out_len);
-                // gettimeofday(&tv, NULL);
-                // t4 = tv.tv_sec * 1000000ULL + tv.tv_usec;
-                // INFO("uvc_video_send_process cost time %lluus\n",t4-t3);
-            }
-            else
+#endif       
+            ObTofFrame *pPoolBuff = pHandler->pDSPQueue->pool_get_buffer();
+            if (NULL != pPoolBuff)
             {
-                if (uvc_video_send_process(pService->dev, depthBuf, depth_out_len, pFrame->pRawBuff->pts) < 0){
-                    // ERR("uvc send depth data failed.\n");
-                }
+                pPoolBuff->pRawBuff = depth_queue;
+                pPoolBuff->frame_id = pFrame->frame_id;
+                pPoolBuff->pts = pts;
+                pPoolBuff->width = pFrame->width;
+                pPoolBuff->height = pFrame->height;
+                pPoolBuff->buffer_size = pFrame->buffer_size;
+                pPoolBuff->hold_flag = true;
+                pHandler->pDSPQueue->queue_push(pPoolBuff);
             }
-#endif
-            ObTofFrame *pPoolBuff = pHandler->pUVCQueue->pool_get_buffer();
-            if (NULL == pPoolBuff){
-                continue;
-            }
-            // pHandler->pUVCQueue->pool_clean();
-            pFrame->pRawBuff->mem[0].addr=(uint32_t)depthBuf;
-
-            pPoolBuff->frame_id    = pFrame->frame_id;
-            pPoolBuff->pts         = pFrame->pts;
-            pPoolBuff->width       = pFrame->width;
-            pPoolBuff->height      = pFrame->height;
-            pPoolBuff->buffer_size = pFrame->buffer_size;
-            pPoolBuff->pRawBuff    = pFrame->pRawBuff;
-            pPoolBuff->hold_flag   = true;          
-            pHandler->pUVCQueue->queue_push(pPoolBuff);
         }
-        
         pHandler->pRawDataQueue->pool_put_buffer(pFrame); //==> ob_tof_stream_get_data_from_rtos_thd
     }
 
     //put all buff to pool
-    while(!pHandler->pUVCQueue->queue_empty()){
+    while (!pHandler->pDSPQueue->queue_empty())
+    {
         ObTofFrame *pBuff = NULL;
-        pHandler->pUVCQueue->queue_try_pop(&pBuff);            
-        pHandler->pUVCQueue->pool_put_buffer(pBuff);
-    } 
+        pHandler->pDSPQueue->queue_try_pop(&pBuff);
+        pHandler->pDSPQueue->pool_put_buffer(pBuff);
+    }
+
+    free(depth_queue);
 
     free(DepthProcessParameter);
 #if ARM_SOFTFITER_ENABLE
@@ -790,18 +824,18 @@ static void *ob_mx6300_depth_stream_process_thd(void *arg)
     INFO("Exit Depth data consume process thread.\n");
     pthread_exit(NULL);
 }
-
 /*****************************************************************************
-*   Prototype    : ob_mx6300_depth_uvc_process_thd
-*   Description  : mx6300 depth process
+*   Prototype    : ob_mx6300_depth_dsp_process_thd
+*   Description  : dsp process
 *   Input        : void * param  
 *   Output       : None
 *   Return Value : static void *
 *****************************************************************************/
-static void *ob_mx6300_depth_uvc_process_thd(void *arg)
+static void *ob_mx6300_depth_dsp_process_thd(void *arg)
 {
     ob_tof_camera_handle *pHandler = (ob_tof_camera_handle *)arg;
-    if (!pHandler) {
+    if (!pHandler)
+    {
         ERR("pHandler is NULL!\n");
         return NULL;
     }
@@ -814,29 +848,167 @@ static void *ob_mx6300_depth_uvc_process_thd(void *arg)
     uint32_t depth_in_len = depth_in_w * depth_in_h * 2;
     uint32_t depth_out_len = depth_out_w * depth_out_h * 2;
 
-    uint8_t *D2C_buf = (uint8_t *)ion_mem_info[TOF_depth0_MEM].va;//d2c之后数据直接输出到ION内存[目前固定]
+    param_ion_mellc_t *D2C_buf = (param_ion_mellc_t *)&ion_mem_info[TOF_depth1_MEM];
+
+    param_ion_mellc_t *dspBuf_0 = (param_ion_mellc_t *)&ion_mem_info[DSP_input_buf_0];
+    param_ion_mellc_t *dspBuf_1 = (param_ion_mellc_t *)&ion_mem_info[DSP_input_buf_1];
+    param_ion_mellc_t *dspBuf_2 = (param_ion_mellc_t *)&ion_mem_info[DSP_input_buf_2];
+    param_ion_mellc_t *dspBuf_3 = (param_ion_mellc_t *)&ion_mem_info[DSP_input_buf_3];
+
+    uint8_t dsp_loopCount = 0;
+    u32 pts = 0;
+
+    sem_wait(&pHandler->semDepthDSPProcessStart);
+
+    ar_picture_buffer_t *dsp_queue = (ar_picture_buffer_t *)malloc(sizeof(ar_picture_buffer_t));
+    if (dsp_queue == NULL)
+    {
+        ERR("dsp_queue malloc error!\n");
+        return NULL;
+    }
+    memset(dsp_queue, 0, sizeof(ar_picture_buffer_t));
+
+    while (pHandler->bDepthDSPRunFlag)
+    {
+        ObTofFrame *pFrame = pHandler->pDSPQueue->queue_wait_and_pop();
+        pts = pFrame->pts;
+
+        if (pFrame->pRawBuff->mem[0].len > 0)
+        {
+            param_ion_mellc_t *ion_mem = (param_ion_mellc_t *)pFrame->pRawBuff->mem[0].addr;
+
+            switch (dsp_loopCount)
+            {
+                case 0:
+                    if (!(ob_streamControl.softfilter_Param.softfilterEnable) &&
+                        !(ob_streamControl.depthSoftD2C_enable))
+                    {
+                        dspBuf_0 = ion_mem;
+                    }
+                    else
+                    {
+                        ob_dsp_data_process(ion_mem, depth_in_w, depth_in_h,
+                                            dspBuf_0, depth_out_w, depth_out_h);
+                    }
+                    dsp_queue->mem[0].addr = (uint32_t)dspBuf_0;
+                    dsp_queue->mem[0].len = depth_in_len;
+                    dsp_loopCount = 1;
+                    break;
+                case 1:
+                    if (!(ob_streamControl.softfilter_Param.softfilterEnable) &&
+                        !(ob_streamControl.depthSoftD2C_enable))
+                    {
+                        dspBuf_1 = ion_mem;
+                    }
+                    else
+                    {
+                        ob_dsp_data_process(ion_mem, depth_in_w, depth_in_h,
+                                            dspBuf_1, depth_out_w, depth_out_h);
+                    }
+                    dsp_queue->mem[0].addr = (uint32_t)dspBuf_1;
+                    dsp_queue->mem[0].len = depth_in_len;
+                    dsp_loopCount = 2;
+                    break;
+                case 2:
+                    if (!(ob_streamControl.softfilter_Param.softfilterEnable) &&
+                        !(ob_streamControl.depthSoftD2C_enable))
+                    {
+                        dspBuf_2 = ion_mem;
+                    }
+                    else
+                    {
+                        ob_dsp_data_process(ion_mem, depth_in_w, depth_in_h,
+                                            dspBuf_2, depth_out_w, depth_out_h);
+                    }
+                    dsp_queue->mem[0].addr = (uint32_t)dspBuf_2;
+                    dsp_queue->mem[0].len = depth_in_len;
+                    dsp_loopCount = 3;
+                    break;
+                case 3:
+                    if (!(ob_streamControl.softfilter_Param.softfilterEnable) &&
+                        !(ob_streamControl.depthSoftD2C_enable))
+                    {
+                        dspBuf_3 = ion_mem;
+                    }
+                    else
+                    {
+                        ob_dsp_data_process(ion_mem, depth_in_w, depth_in_h,
+                                            dspBuf_3, depth_out_w, depth_out_h);
+                    }
+                    dsp_queue->mem[0].addr = (uint32_t)dspBuf_3;
+                    dsp_queue->mem[0].len = depth_in_len;
+                    dsp_loopCount = 0;
+                    break;
+                default:
+                    break;
+            }
+
+            ObTofFrame *pPoolBuff = pHandler->pUVCQueue->pool_get_buffer();
+            if (NULL != pPoolBuff)
+            {
+                pPoolBuff->pRawBuff = dsp_queue;
+                pPoolBuff->frame_id = pFrame->frame_id;
+                pPoolBuff->pts = pts;
+                pPoolBuff->width = pFrame->width;
+                pPoolBuff->height = pFrame->height;
+                pPoolBuff->buffer_size = pFrame->buffer_size;
+                pPoolBuff->hold_flag = true;
+                pHandler->pUVCQueue->queue_push(pPoolBuff);
+            }            
+        }
+        pHandler->pDSPQueue->pool_put_buffer(pFrame);
+    }
+    while (!pHandler->pUVCQueue->queue_empty())
+    {
+        ObTofFrame *pBuff = NULL;
+        pHandler->pUVCQueue->queue_try_pop(&pBuff);
+        pHandler->pUVCQueue->pool_put_buffer(pBuff);
+    }
+
+    free(dsp_queue);
+    return NULL;
+}
+/*****************************************************************************
+*   Prototype    : ob_mx6300_depth_uvc_process_thd
+*   Description  : mx6300 depth process
+*   Input        : void * param  
+*   Output       : None
+*   Return Value : static void *
+*****************************************************************************/
+static void *ob_mx6300_depth_uvc_process_thd(void *arg)
+{
+    ob_tof_camera_handle *pHandler = (ob_tof_camera_handle *)arg;
+    if (!pHandler)
+    {
+        ERR("pHandler is NULL!\n");
+        return NULL;
+    }
+    tof_uvc_service *pService = tof_uvc_gadget_get_device_handle(OB_UVC_DEVICE_NODE_NUM_DEPTH);
+
+    uint32_t depth_in_w = ob_streamControl.depth_inputImage_width;
+    uint32_t depth_in_h = ob_streamControl.depth_inputImage_height;
+    uint32_t depth_out_w = ob_streamControl.depth_ouputImage_width;
+    uint32_t depth_out_h = ob_streamControl.depth_ouputImage_height;
+    uint32_t depth_in_len = depth_in_w * depth_in_h * 2;
+    uint32_t depth_out_len = depth_out_w * depth_out_h * 2;
+
+    param_ion_mellc_t *D2C_buf = (param_ion_mellc_t *)&ion_mem_info[TOF_depth1_MEM];   
 
     sem_wait(&pHandler->semDepthUVCProcessStart);
+    u32 pts = 0;
 
-    while (pHandler->bDepthUvcRunFlag)
+    while (pHandler->bDepthUVCRunFlag)
     {
         ObTofFrame *pFrame = pHandler->pUVCQueue->queue_wait_and_pop();
-        if (ob_streamControl.depthSoftD2C_enable)
-        {
-            ob_D2C_DSP_process((uint8_t *)pFrame->pRawBuff->mem[0].addr, depth_in_w, depth_in_h, D2C_buf, depth_out_w, depth_out_h);
+        pts = pFrame->pts;
 
-            if (uvc_video_send_process(pService->dev, D2C_buf, depth_out_len, pFrame->pRawBuff->pts) < 0)
-            {
-                // ERR("uvc send depth data failed.\n");
-            }
-        }
-        else
+        param_ion_mellc_t *ion_mem = (param_ion_mellc_t *)pFrame->pRawBuff->mem[0].addr;
+
+        if (uvc_video_send_process(pService->dev, ion_mem->va, depth_out_len, pts) < 0)
         {
-            if (uvc_video_send_process(pService->dev, (uint8_t *)pFrame->pRawBuff->mem[0].addr, depth_out_len, pFrame->pRawBuff->pts) < 0)
-            {
-                // ERR("uvc send depth data failed.\n");
-            }
+            ERR("uvc send depth data failed.\n");
         }
+
         pHandler->pUVCQueue->pool_put_buffer(pFrame);
     }
     return NULL;
@@ -894,7 +1066,8 @@ static void *ob_mx6300_ir_stream_process_thd(void *arg)
     {
         ObTofFrame *pFrame = pHandler->pRawDataQueue->queue_wait_and_pop();
 
-        if (uvc_video_send_process(pService->dev, (void *)(pFrame->pRawBuff->mem[0].addr), pFrame->pRawBuff->mem[0].len, pFrame->pRawBuff->pts) < 0)
+        if (uvc_video_send_process(pService->dev, (void *)(pFrame->pRawBuff->mem[0].addr),
+                                   pFrame->pRawBuff->mem[0].len, pFrame->pRawBuff->pts) < 0)
         {
             //ERR("uvc send ir data failed.\n");
         }
@@ -930,7 +1103,8 @@ int32_t ob_ir_data_process_start(void)
     }
 
     //[1] 启动消费端
-    start_new_thread_join("ir process thread", &pHandle->IRConsumeThdId, ob_mx6300_ir_stream_process_thd, (void *)pHandle);
+    start_new_thread_join("ir process thread", &pHandle->IRConsumeThdId,
+                          ob_mx6300_ir_stream_process_thd, (void *)pHandle);
     pHandle->bIRConsumeRunFlag = true;
     sem_post(&pHandle->semIRConsumeProcessStart);
 
@@ -1008,16 +1182,22 @@ int32_t ob_depth_data_process_start(void)
     }
 
     //[1] -------depth data consume thread create-------
-    start_new_thread_join("depth UVC thread", &pHandle->DepthUVCThdId, ob_mx6300_depth_uvc_process_thd, (void *)pHandle);
-    pHandle->bDepthUvcRunFlag = true;
-    sem_post(&pHandle->semDepthUVCProcessStart);  
+    start_new_thread_join("depth UVC thread", &pHandle->DepthUVCThdId,
+                          ob_mx6300_depth_uvc_process_thd, (void *)pHandle);
+    pHandle->bDepthUVCRunFlag = true;
+    sem_post(&pHandle->semDepthUVCProcessStart);
 
+    //[1] -------depth data consume thread create-------
+    start_new_thread_join("depth DSP thread", &pHandle->DepthDSPThdId,
+                          ob_mx6300_depth_dsp_process_thd, (void *)pHandle);
+    pHandle->bDepthDSPRunFlag = true;
+    sem_post(&pHandle->semDepthDSPProcessStart);
 
     //[2] -------depth data consume thread create-------
-    start_new_thread_join("depth process thread", &pHandle->DepthConsumeThdId, ob_mx6300_depth_stream_process_thd, (void *)pHandle);
+    start_new_thread_join("depth process thread", &pHandle->DepthConsumeThdId,
+                          ob_mx6300_depth_stream_process_thd, (void *)pHandle);
     pHandle->bDepthConsumeRunFlag = true;
     sem_post(&pHandle->semDepthConsumeProcessStart);
-
 
     //[3]启动生产端
     pHandle->bSensorCaptureRunFlag = true;
@@ -1053,20 +1233,27 @@ int32_t ob_depth_data_process_stop(void)
     }
 
     //[1]停止depth uvc消费
-    pHandle->bDepthUvcRunFlag = false;   //==> ob_mx6300_depth_uvc_process_thd
+    pHandle->bDepthUVCRunFlag = false;   //==> ob_mx6300_depth_uvc_process_thd
     if (0 != pHandle->DepthUVCThdId){
         pthread_join(pHandle->DepthUVCThdId, NULL);
         pHandle->DepthUVCThdId = 0;
     }
 
-    //[2]停止depth消费
+    //[2]停止depth dsp消费
+    pHandle->bDepthDSPRunFlag = false;   //==> ob_mx6300_depth_dsp_process_thd
+    if (0 != pHandle->DepthDSPThdId){
+        pthread_join(pHandle->DepthDSPThdId, NULL);
+        pHandle->DepthDSPThdId = 0;
+    }
+
+    //[3]停止depth消费
     pHandle->bDepthConsumeRunFlag = false;  //==> ob_mx6300_depth_stream_process_thd
     if (0 != pHandle->DepthConsumeThdId){
         pthread_join(pHandle->DepthConsumeThdId, NULL);
         pHandle->DepthConsumeThdId = 0;
     }
     
-    //[3]停止流采集
+    //[4]停止流采集
     pHandle->bSensorCaptureRunFlag = false; // ==> ob_tof_stream_get_data_from_rtos_thd
     sem_wait(&pHandle->semRtosCaptureStop);
 
@@ -1090,7 +1277,7 @@ static int32_t ob_mx6300_init(void)
     sl_usr_cfg.cam_id = 0;
     //sl_usr_cfg.stream_type = STREAM_IR;
     sl_usr_cfg.stream_type = STREAM_DEPTH;
-    sl_usr_cfg.input_vidio_res.width = 1024;
+    sl_usr_cfg.input_vidio_res.width = 960;
     sl_usr_cfg.input_vidio_res.height = 1280;
     sl_usr_cfg.subsample_rate = 15;
     sl_usr_cfg.fps = 30;
@@ -1144,8 +1331,13 @@ int32_t ob_tof_stream_module_init(void)
     pHandle->DepthConsumeThdId = 0;
 	sem_init(&pHandle->semDepthConsumeProcessStart, 0, 0);
 
+    //Depth dsp消费
+    pHandle->bDepthDSPRunFlag = false;
+    pHandle->DepthDSPThdId = 0;
+	sem_init(&pHandle->semDepthDSPProcessStart, 0, 0);
+
     //Depth uvc消费
-    pHandle->bDepthUvcRunFlag = false;
+    pHandle->bDepthUVCRunFlag = false;
     pHandle->DepthUVCThdId = 0;
 	sem_init(&pHandle->semDepthUVCProcessStart, 0, 0);
 
@@ -1156,29 +1348,59 @@ int32_t ob_tof_stream_module_init(void)
 
     //malloc buff pool
     pHandle->pRawDataQueue = CommonQueue<ObTofFrame>::create(4, 4);
-    if (NULL == pHandle->pRawDataQueue){
+    if (NULL == pHandle->pRawDataQueue)
+    {
         ERR("Create pBuffQueue failed.\n");
         return ORBBEC_FAILED;
     }
-    for (int i = 0; i < pHandle->pRawDataQueue->pool_size(); i++){
+    for (int i = 0; i < pHandle->pRawDataQueue->pool_size(); i++)
+    {
         ObTofFrame *pBuff = pHandle->pRawDataQueue->pool_get_buffer();
         pBuff->hold_flag = false;
         pHandle->pRawDataQueue->pool_put_buffer(pBuff);
     }
 
+    pHandle->pDSPQueue = CommonQueue<ObTofFrame>::create(4, 4);
+    if (NULL == pHandle->pDSPQueue)
+    {
+        ERR("Create pDSPQueue failed.\n");
+        return ORBBEC_FAILED;
+    }
+    for (int i = 0; i < pHandle->pDSPQueue->pool_size(); i++)
+    {
+        ObTofFrame *pBuff = pHandle->pDSPQueue->pool_get_buffer();
+        pBuff->hold_flag = false;
+        pHandle->pDSPQueue->pool_put_buffer(pBuff);
+    }
+
     pHandle->pUVCQueue = CommonQueue<ObTofFrame>::create(4, 4);
-    if (NULL == pHandle->pUVCQueue){
+    if (NULL == pHandle->pUVCQueue)
+    {
         ERR("Create pUVCQueue failed.\n");
         return ORBBEC_FAILED;
     }
-    for (int i = 0; i < pHandle->pUVCQueue->pool_size(); i++){
+    for (int i = 0; i < pHandle->pUVCQueue->pool_size(); i++)
+    {
         ObTofFrame *pBuff = pHandle->pUVCQueue->pool_get_buffer();
         pBuff->hold_flag = false;
         pHandle->pUVCQueue->pool_put_buffer(pBuff);
     }
 
 #if DSP_D2C_ENABLE
-    ob_dsp_init();
+
+    ob_streamControl.d2c_pixFormat.color_width = 960;
+    ob_streamControl.d2c_pixFormat.color_height = 1280;
+    ob_streamControl.d2c_pixFormat.depth_width = 960;
+    ob_streamControl.d2c_pixFormat.depth_height = 1280;
+
+    ob_streamControl.depthSoftD2C_enable = true;
+
+    ob_streamControl.softfilter_Param.maxDiff = 120;
+    ob_streamControl.softfilter_Param.maxSpeckleSize = 800;
+    ob_streamControl.softfilter_Param.softfilterEnable = true;
+
+    ob_dsp_init(ob_streamControl.d2c_pixFormat,
+                ob_streamControl.depthSoftD2C_enable, ob_streamControl.softfilter_Param);
 #endif
 
 #if MX6300_ENABLE
@@ -1188,12 +1410,12 @@ int32_t ob_tof_stream_module_init(void)
         return ORBBEC_FAILED;
     }
 #endif
+
     ob_streamControl.irStopStream = false;
     ob_streamControl.depthStopStream = false;
     ob_streamControl.typeSwitch_Enable = false;
     ob_streamControl.mx6300_recevieBuf_size = 960 * 1280 * 2;
     ob_streamControl.mx6300_stream_type = ORBBEC_STREAM_TYPE_NONE;
-
 
     //start_new_thread("capture tof stream thread", NULL, ob_tof_stream_msg_process_thd, (void *)pHandle);
     //start_new_thread("tof data process thread", NULL, ob_tof_stream_rawdata_process_thd, (void *)pHandle);
@@ -1232,4 +1454,3 @@ int32_t ob_tof_stream_module_uninit(void)
 
     //TODO
 }
-

@@ -51,7 +51,6 @@ extern "C"{
 }
 
 
-
 /*==============================================*
  *      constants or macros define              *
  *----------------------------------------------*/
@@ -88,6 +87,11 @@ struct buffer {
     size_t length;
 };
 
+typedef enum _DATA_TYPE
+{
+    TYPE_IR,
+    TYPE_DEPTH
+}EM_DATA_TYPE;
 
 typedef struct tof_uvc_device
 {
@@ -220,7 +224,7 @@ extern void ob_tof_uvc_events_process(struct tof_uvc_device *dev, int dev_index)
 *   Output       : None
 *   Return Value : int
 *****************************************************************************/
-int ob_tof_uvc_video_send(struct tof_uvc_device *dev, void *data, unsigned int len, unsigned int pts, fd_set wfds, struct timeval tv);
+//int ob_tof_uvc_video_send(struct tof_uvc_device *dev, void *data, unsigned int len, unsigned int pts, fd_set wfds, struct timeval tv);
 
 
 /*****************************************************************************
@@ -267,6 +271,11 @@ extern int uvc_video_send_process(struct tof_uvc_device *dev, void *data, unsign
 *   Return Value : extern int
 *****************************************************************************/
 int ob_tof_uvc_handle_streamoff_event(struct tof_uvc_device *dev, int dev_index);
+
+int32_t ob_stream_on_op(EM_DATA_TYPE data_type);
+int32_t ob_stream_off_op(EM_DATA_TYPE data_type);
+
+uint32_t ob_mx6300_stream_switch(uint32_t type, uint8_t img_fps);
 
 #ifdef __cplusplus
 #if __cplusplus

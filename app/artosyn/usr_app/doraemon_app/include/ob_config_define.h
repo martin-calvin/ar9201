@@ -11,6 +11,16 @@
 *  Description   : orbbec config define
 *
 ******************************************************************************/
+#ifndef __OB_CONFIG_DEFINE_H__
+#define __OB_CONFIG_DEFINE_H__
+
+
+#ifdef __cplusplus
+#if __cplusplus
+extern "C"{
+#endif
+#endif /* __cplusplus */
+
 
 /*==============================================*
  *      include header files                    *
@@ -75,13 +85,11 @@ matching to driver: f_uvc.c multi uvc's index define: UVC_INDEX_NUM_RGB UVC_INDE
 #define TOF_PIPELINE_INDEX         TOF_CAMERA_ID
 
 
-/*
-    whether depth support cache
-*/
+/* whether depth support cache */
 #define DEPTH_CACHE_ENABLE         1
 
-
-#define RGB_TIMESTAMP_FIXED_ENABLE   1
+/* whether fixed rgb timestamp */
+#define RGB_TIMESTAMP_FIXED_ENABLE 1
 
 /*==============================================*
  *      project-wide global variables           *
@@ -94,5 +102,12 @@ matching to driver: f_uvc.c multi uvc's index define: UVC_INDEX_NUM_RGB UVC_INDE
  *----------------------------------------------*/
 
 
+#ifdef __cplusplus
+#if __cplusplus
+}
+#endif
+#endif /* __cplusplus */
 
+
+#endif /* __OB_CONFIG_DEFINE_H__ */
 

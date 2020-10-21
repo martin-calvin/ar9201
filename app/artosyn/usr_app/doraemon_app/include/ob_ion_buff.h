@@ -42,9 +42,10 @@ typedef struct{
 }ion_buff_t;
 
 
+#pragma pack(pop) //恢复对齐状态
 #define OB_ALLOC_ION_BUFFER(VA, PA, SIZE) \
     do{ \
-    	VA = ar_ion_malloc(SIZE); \
+    	VA = ar_ion_malloc_ex(SIZE, 1); \
     	if(!VA) \
     	{ \
     		ERR("Malloc memory failed, exit!\r\n"); \

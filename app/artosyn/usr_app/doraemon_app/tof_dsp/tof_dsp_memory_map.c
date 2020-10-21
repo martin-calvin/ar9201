@@ -19,6 +19,8 @@
 #include "dbg_info.h"
 #include "logutil.h"
 #include "d2c_arith.h"
+
+static bool init_count = true;
 /*-----------------dsp arm通信结构-----------------------*/
 volatile param_ion_mellc_t ion_mem_info[USE_ION_MEM_NUM];
 work icc_msg; // icc 通信结构
@@ -48,6 +50,16 @@ struct mem_list_t mem_list[] =
         {D2C_linear_rot_coeff_ht, 3 * 960 * 1280 * 4},
         {D2C_linear_color_y_max_lut, 1280 * 4},
         {D2C_linear_color_y_min_lut, 1280 * 4},
+
+        {D2C_input_buf_0, 960 * 1280 * 2},
+        {D2C_input_buf_1, 960 * 1280 * 2},
+        {D2C_input_buf_2, 960 * 1280 * 2},
+        {D2C_input_buf_3, 960 * 1280 * 2},
+
+        {DSP_input_buf_0, 960 * 1280 * 2},
+        {DSP_input_buf_1, 960 * 1280 * 2},
+        {DSP_input_buf_2, 960 * 1280 * 2},
+        {DSP_input_buf_3, 960 * 1280 * 2},
 };
 
 /*****************************************************************************
@@ -72,12 +84,12 @@ int do_alloc_ion(param_ion_mellc_t *mem, uint32_t len)
         AR_GET_ION_MEMORY(mem->va, mem->pa, mem->len);
         if (NULL == mem->va || NULL == mem->pa)
         {
-            printf("Unable to allocate memory,length is 0x%x\n", mem->len);
+            ERR("Unable to allocate memory,length is 0x%x\n", mem->len);
             return -1;
         }
         // clear mem
         memset(mem->va, 0, len);
-        printf("input va %x pa %x length %x\r\n\n", mem->va, mem->pa, mem->len);
+        //INFO("input va %x pa %x length %x\r\n\n", mem->va, mem->pa, mem->len);
     }
     return 0;
 }
@@ -98,7 +110,7 @@ int ar_load_file(char *path, char *buf, int size)
     pFile = fopen(path, "rb");
     if (!pFile)
     {
-        printf("Open file %s error: %s\r\n", path, strerror(errno));
+        ERR("Open file %s error: %s\r\n", path, strerror(errno));
         return -1;
     }
 
@@ -113,7 +125,7 @@ int ar_load_file(char *path, char *buf, int size)
     ret = fread(buf, 1, file_len, pFile);
     if (ret < 0)
     {
-        printf("Read file %s size %d error: %s\r\n", path, file_len, strerror(errno));
+        ERR("Read file %s size %d error: %s\r\n", path, file_len, strerror(errno));
         fclose(pFile);
         return ret;
     }
@@ -164,13 +176,13 @@ static int load_calib_file_t(char *calibParamFile)
     FILE *fp = fopen(calibFile, "rb");
     if (fp == NULL)
     {
-        printf("open %s fail!\n", calibFile);
+        ERR("open %s fail!\n", calibFile);
         return -1;
     }
 
     count = fread(ar9201_tof_param_ptr, 1, sizeof(CALIB_PARAM_FILE_ST_t), fp);
     fclose(fp);
-    printf("OB_DSP_LOAD_REF cmd ok,read file size=%d,need size=%d.\n", count, sizeof(CALIB_PARAM_FILE_ST_t));
+    INFO("OB_DSP_LOAD_REF cmd ok,read file size=%d,need size=%d.\n", count, sizeof(CALIB_PARAM_FILE_ST_t));
     return 0;
 }
 
@@ -211,7 +223,7 @@ int dist2DepthCof(void *depth_coef, void *g_tof_params)
     }
     //-------------------------- --------------------------------->
     //   tof_param_->depthCof = depth_coef;
-    printf("dist2DepthCof success!\n");
+    INFO("dist2DepthCof success!\n");
     return 0;
 }
 /*****************************************************************************
@@ -231,7 +243,7 @@ int parser_depth_parms(char *fname, void *dst_buf)
     {
         return -1;
     }
-    printf("parser success!\n");
+    INFO("parser success!\n");
     return 0;
 }
 /*****************************************************************************
@@ -358,14 +370,14 @@ int dspParam2ion(char *fname, void *ionmem, char *cfname)
     ret = parser_depth_parms(fname, &tof_param_);
     if (ret < 0)
     {
-        printf("parser failed!\n");
+        ERR("parser failed!\n");
         return ret;
     }
     //2，根据标定内参计算 depth_coef
     depth_coef = (uint32_t *)malloc(640 * 480 * sizeof(int32_t)); //fixme: 2020-07-18，current dsp need size
     if (!depth_coef)
     {
-        printf("depth_coef malloc memeory out!\n");
+        ERR("depth_coef malloc memeory out!\n");
         return -1;
     }
     dist2DepthCof(depth_coef, &tof_param_);
@@ -376,10 +388,10 @@ int dspParam2ion(char *fname, void *ionmem, char *cfname)
     ret = ObToFParamsFree();
     if (ret)
     {
-        printf("ObToFParamsFree fail, %d\n", ret);
+        ERR("ObToFParamsFree fail, %d\n", ret);
     }
     free(depth_coef);
-    printf("dspParam2ion complete!\n");
+    INFO("dspParam2ion complete!\n");
     return 0;
 }
 /*****************************************************************************
@@ -510,20 +522,21 @@ int dsp_params_deinit(ObTofDspParams *p_dsp_params)
 *   Output       : ObTofDspParams *ObfDspParams
 *   Return Value : success 0; failed -1
 *****************************************************************************/
-int dsp_D2Cparams_init(ObTofDspParams *ObfDspParams, Depth2Color_pixFormat pixFormat)
+int dsp_D2Cparams_init(ObTofDspParams *ObfDspParams, Depth2Color_pixFormat pixFormat,
+                       bool d2c_enable, softfilterParam softfilter_param)
 {
-#if 1
     FILE *Param_data;
 
     if ((pixFormat.color_width == 960) && (pixFormat.color_height == 1280))
-        Param_data = fopen("/factory/doraemon/distortion_d2c4x3.bin", "rb");
+        Param_data = fopen(cfgParameter_960_1280, "rb");
     else if ((pixFormat.color_width == 720) && (pixFormat.color_height == 1280))
-        Param_data = fopen("/factory/doraemon/d2c_16x9.bin", "rb");
+        Param_data = fopen(cfgParameter_720_1280, "rb");
     else if ((pixFormat.color_width == 480) && (pixFormat.color_height == 640))
-        Param_data = fopen("/factory/doraemon/distortion_d2c4x3.bin", "rb");
+        Param_data = fopen(cfgParameter_960_1280, "rb");
     else
     {
-        ERR("Depth2Color pixFormat is invalid!\n");
+        ERR("Depth2Color pixFormat is invalid! color_width:%d,color_height:%d\n",
+            pixFormat.color_width, pixFormat.color_height);
         return -1;
     }
 
@@ -532,13 +545,13 @@ int dsp_D2Cparams_init(ObTofDspParams *ObfDspParams, Depth2Color_pixFormat pixFo
         ERR("calibration param file cannot be found!\n");
         return -1;
     }
-    int *linear_rot_coeff_ht = (int *)malloc(3 * 1280 * 960 * 4);
+    float *linear_rot_coeff_ht = (float *)malloc(3 * 1280 * 960 * 4);
     memset(linear_rot_coeff_ht, 0, 3 * 1280 * 960 * 4);
     int *color_y_max_lut = (int *)malloc(4 * 1280);
     memset(color_y_max_lut, 0, 4 * 1280);
     int *color_y_min_lut = (int *)malloc(4 * 1280);
     memset(color_y_min_lut, 0, 4 * 1280);
-    int trans_coeff[3];
+    float trans_coeff[3];
 
     Doraemon_Content_t *doraemon_d2c_param = (Doraemon_Content_t *)malloc(sizeof(Doraemon_Content_t));
     memset(doraemon_d2c_param, 0, sizeof(doraemon_d2c_param));
@@ -569,7 +582,8 @@ int dsp_D2Cparams_init(ObTofDspParams *ObfDspParams, Depth2Color_pixFormat pixFo
             doraemon_d2c_param->soft_d2c.d_intr_p[i] *=  depth_ratio;
             ObfDspParams->inputs.pImpl.color_K_[i] *= depth_ratio;
             doraemon_d2c_param->soft_d2c.c_intr_p[i] *= depth_ratio;
-            // INFO("depth_k[%d]=%f,color_k=%f\n",i, ObfDspParams->inputs.pImpl.depth_K_[i], ObfDspParams->inputs.pImpl.color_K_[i]);
+            // INFO("depth_k[%d]=%f,color_k=%f\n", i, ObfDspParams->inputs.pImpl.depth_K_[i],
+            //      ObfDspParams->inputs.pImpl.color_K_[i]);
         }
         doraemon_d2c_param->soft_d2c.IRimg_size.width = 480;
         doraemon_d2c_param->soft_d2c.IRimg_size.height = 640;
@@ -577,13 +591,16 @@ int dsp_D2Cparams_init(ObTofDspParams *ObfDspParams, Depth2Color_pixFormat pixFo
         doraemon_d2c_param->soft_d2c.colorimg_size.width = 480;
         doraemon_d2c_param->soft_d2c.colorimg_size.height = 640;
     }
-    int rows, out_rows;
-    initD2C_param(&doraemon_d2c_param->soft_d2c, linear_rot_coeff_ht, trans_coeff,
-                  color_y_max_lut, color_y_min_lut, &rows, &out_rows);
+    // int rows, out_rows;
     // initD2C_param(&doraemon_d2c_param->soft_d2c, linear_rot_coeff_ht, trans_coeff,
-    //               color_y_max_lut, color_y_min_lut, &ObfDspParams->inputs.pImpl.rows, &ObfDspParams->inputs.pImpl.out_rows);
+    //               color_y_max_lut, color_y_min_lut, &rows, &out_rows);
+    bool color_distort_switch = true;
+    initD2C_param(&doraemon_d2c_param->soft_d2c, color_distort_switch, linear_rot_coeff_ht, trans_coeff,
+                  color_y_max_lut, color_y_min_lut, &ObfDspParams->inputs.pImpl.rows, &ObfDspParams->inputs.pImpl.out_rows);
 
 #if 0//test把参数存下来，方便定位问题
+    INFO("ObfDspParams->inputs.pImpl.rows:%d,ObfDspParams->inputs.pImpl.out_rows:%d\n",
+         ObfDspParams->inputs.pImpl.rows, ObfDspParams->inputs.pImpl.out_rows);
     ar_dump_file("/usrdata/usr/data/doraemon/dsp_parms/d2c_test/color_y_max_lut.bin", color_y_max_lut, 4 * 1280);
     ar_dump_file("/usrdata/usr/data/doraemon/dsp_parms/d2c_test/color_y_min_lut.bin", color_y_min_lut, 4 * 1280);
     ar_dump_file("/usrdata/usr/data/doraemon/dsp_parms/d2c_test/linear_rot_coeff_ht.bin", linear_rot_coeff_ht, 3 * 1280 * 960 * 4);
@@ -602,15 +619,15 @@ int dsp_D2Cparams_init(ObTofDspParams *ObfDspParams, Depth2Color_pixFormat pixFo
     ObfDspParams->inputs.pImpl.color_y_min_lut = ion_mem_info[D2C_linear_color_y_min_lut].pa;
 
     ObfDspParams->inputs.pImpl.d2c_param_.depth_undist_switch = false;
-    ObfDspParams->inputs.pImpl.d2c_param_.rgb_undist_switch = false;
+    ObfDspParams->inputs.pImpl.d2c_param_.rgb_undist_switch = true;
     ObfDspParams->inputs.pImpl.d2c_param_.isDepthMirror = false;
     ObfDspParams->inputs.pImpl.d2c_param_.depth_unit_mm = 1;
-    ObfDspParams->inputs.pImpl.d2c_param_.enable_gap_fill = false;
-    ObfDspParams->inputs.pImpl.d2c_param_.enable_depth_Copy4 = true;
-    ObfDspParams->inputs.pImpl.d2c_param_.depth_min_value = 1;
-    ObfDspParams->inputs.pImpl.d2c_param_.depth_max_value = 10000;
+    ObfDspParams->inputs.pImpl.d2c_param_.enable_gap_fill = true;
+    ObfDspParams->inputs.pImpl.d2c_param_.enable_depth_Copy4 = false;
+    ObfDspParams->inputs.pImpl.d2c_param_.depth_min_value = 450;
+    ObfDspParams->inputs.pImpl.d2c_param_.depth_max_value = 3500;
 
-    ObfDspParams->inputs.pImpl.param_loaded_ = true;
+    ObfDspParams->inputs.pImpl.d2c_enable = d2c_enable;
 
     ObfDspParams->inputs.pImpl.color_width = pixFormat.color_width;
     ObfDspParams->inputs.pImpl.color_height = pixFormat.color_height;
@@ -621,6 +638,53 @@ int dsp_D2Cparams_init(ObTofDspParams *ObfDspParams, Depth2Color_pixFormat pixFo
     ObfDspParams->inputs.constInputs.buf = ion_mem_info[TOF_DspUse_MEM].pa;
     ObfDspParams->outputs.img_crop_dst = ion_mem_info[TOF_depth1_MEM].pa;
 
+    ObfDspParams->outputs.aligned_depth = (uint16_t *)ion_mem_info[TOF_depth0_MEM].pa; // update depth out physic address.
+    // INFO("------------------ObfDspParams->outputs.aligned_depth:%x\n", ObfDspParams->outputs.aligned_depth);
+
+    memcpy(&ObfDspParams->inputs.softfilterparam, &softfilter_param, sizeof(softfilter_param));
+
+#if 0
+    FILE *dsp_file;
+
+    dsp_file = fopen("./dsp_file.bin", "wb");
+    fwrite(doraemon_d2c_param->soft_d2c.d_intr_p, sizeof(doraemon_d2c_param->soft_d2c.d_intr_p), 1, dsp_file);
+    fwrite(doraemon_d2c_param->soft_d2c.c_intr_p, sizeof(doraemon_d2c_param->soft_d2c.c_intr_p), 1, dsp_file);
+    fwrite(doraemon_d2c_param->soft_d2c.d2c_r, sizeof(doraemon_d2c_param->soft_d2c.d2c_r), 1, dsp_file);
+    fwrite(doraemon_d2c_param->soft_d2c.d2c_t, sizeof(doraemon_d2c_param->soft_d2c.d2c_t), 1, dsp_file);
+    fwrite(doraemon_d2c_param->soft_d2c.d_k, sizeof(doraemon_d2c_param->soft_d2c.d_k), 1, dsp_file);
+    fwrite(doraemon_d2c_param->soft_d2c.c_k, sizeof(doraemon_d2c_param->soft_d2c.c_k), 1, dsp_file);
+    fwrite(linear_rot_coeff_ht, 480 * 640 * 3 * 4, 1, dsp_file);
+    fwrite(&trans_coeff, 3 * 4, 1, dsp_file);
+    fwrite(color_y_max_lut, 4 * 640, 1, dsp_file);
+    fwrite(color_y_min_lut, 4 * 640, 1, dsp_file);
+    // fwrite(&ObfDspParams->inputs.pImpl.d2c_param_, sizeof(ObfDspParams->inputs.pImpl.d2c_param_), 1, dsp_file);
+    // fwrite(&ObfDspParams->inputs.pImpl.param_loaded_, sizeof(ObfDspParams->inputs.pImpl.param_loaded_), 1, dsp_file);
+
+    // float *distortTable_x_ = (float *)malloc(4);
+    // memset(distortTable_x_, 0, 4);
+    // fwrite(distortTable_x_, sizeof(distortTable_x_), 1, dsp_file);
+    // free(distortTable_x_);
+
+    // float *distortTable_y_ = (float *)malloc(4);
+    // memset(distortTable_y_, 0, 4);
+    // fwrite(distortTable_y_, sizeof(distortTable_y_), 1, dsp_file);
+    // free(distortTable_y_);
+
+    // float *disto_rot_coeff_ht = (float *)malloc(3 * 1280 * 960 * sizeof(float));
+    // memset(disto_rot_coeff_ht, 0, 3 * 1280 * 960 * sizeof(float));
+    // fwrite(disto_rot_coeff_ht, sizeof(3 * 1280 * 960 * sizeof(float)), 1, dsp_file);
+    // free(disto_rot_coeff_ht);
+
+    fwrite(&pixFormat.color_width, sizeof(pixFormat.color_width), 1, dsp_file);
+    fwrite(&pixFormat.color_width, sizeof(pixFormat.color_height), 1, dsp_file);
+    fwrite(&pixFormat.color_width, sizeof(pixFormat.depth_width), 1, dsp_file);
+    fwrite(&pixFormat.color_width, sizeof(pixFormat.color_height), 1, dsp_file);
+
+    fwrite(&ObfDspParams->inputs.pImpl.rows, sizeof(ObfDspParams->inputs.pImpl.rows), 1, dsp_file);
+    fwrite(&ObfDspParams->inputs.pImpl.out_rows, sizeof(ObfDspParams->inputs.pImpl.out_rows), 1, dsp_file);
+
+    fclose(dsp_file);
+#endif
     free(doraemon_d2c_param);
     free(linear_rot_coeff_ht);
     free(color_y_max_lut);
@@ -628,79 +692,6 @@ int dsp_D2Cparams_init(ObTofDspParams *ObfDspParams, Depth2Color_pixFormat pixFo
     fclose(Param_data);
 
     return 0;
-
-#else
-    FILE *Param_data = fopen("./data_jqm.bin", "rb");
-    if (Param_data == NULL)
-    {
-        ERR("calibration param file cannot be found!\n");
-        return -1;
-    }
-
-    // float *D2C_linear_rot_coeff_ht_va = (float *)ion_mem_info[D2C_linear_rot_coeff_ht].va;
-    // int *D2C_color_y_max_lut_buf_va = (int *)ion_mem_info[D2C_linear_color_y_max_lut].va;
-    // int *D2C_color_y_min_lut_buf_va = (int *)ion_mem_info[D2C_linear_color_y_min_lut].va;
-    char *linear_rot_coeff_ht = (char *)malloc(3 * 1280 * 960 * 4);
-    char *color_y_max_lut = (char *)malloc(4 * 1280);
-    char *color_y_min_lut = (char *)malloc(4 * 1280);
-
-    fread(&ObfDspParams->inputs.pImpl.depth_K_, sizeof(char), 4 * sizeof(float), Param_data);
-    fread(&ObfDspParams->inputs.pImpl.color_K_, sizeof(char), 4 * sizeof(float), Param_data);
-    fread(&ObfDspParams->inputs.pImpl.rot_, sizeof(char), 9 * sizeof(float), Param_data);
-    fread(&ObfDspParams->inputs.pImpl.trans_, sizeof(char), 3 * sizeof(float), Param_data);
-    fread(&ObfDspParams->inputs.pImpl.depth_distort_, sizeof(char), 5 * sizeof(float), Param_data);
-    fread(&ObfDspParams->inputs.pImpl.color_distort_, sizeof(char), 5 * sizeof(float), Param_data);
-
-    fread(linear_rot_coeff_ht, sizeof(char), 3 * 1280 * 960 * sizeof(float), Param_data);
-    memcpy(ion_mem_info[D2C_linear_rot_coeff_ht].va, linear_rot_coeff_ht, 3 * 1280 * 960 * 4);
-
-    // for (int i = 1280 * 300; i < 1280 * 300 + 300; i++)
-    // {
-    //     printf("linear_rot_coeff_ht[%d]:%f\n", i, *((float *)linear_rot_coeff_ht + i));
-    //     printf("ion_mem_info[D2C_linear_rot_coeff_ht][%d]:%f\n", i, *((float *)ion_mem_info[D2C_linear_rot_coeff_ht].va + i));
-    // }
-
-    fread(&ObfDspParams->inputs.pImpl.trans_coeff_[0], sizeof(char), 3 * sizeof(float), Param_data);
-
-    fread(color_y_max_lut, sizeof(char), 1280 * sizeof(int32_t), Param_data);
-    memcpy(ion_mem_info[D2C_linear_color_y_max_lut].va, color_y_max_lut, 1280 * 4);
-    fread(color_y_min_lut, sizeof(char), 1280 * sizeof(int32_t), Param_data);
-    memcpy(ion_mem_info[D2C_linear_color_y_min_lut].va, color_y_min_lut, 1280 * 4);
-
-    ObfDspParams->inputs.pImpl.linear_rot_coeff_ht = ion_mem_info[D2C_linear_rot_coeff_ht].pa;
-    ObfDspParams->inputs.pImpl.color_y_max_lut = ion_mem_info[D2C_linear_color_y_max_lut].pa;
-    ObfDspParams->inputs.pImpl.color_y_min_lut = ion_mem_info[D2C_linear_color_y_min_lut].pa;
-
-    // printf("ObfDspParams->inputs.pImpl.linear_rot_coeff_ht:%x\n", ObfDspParams->inputs.pImpl.linear_rot_coeff_ht);
-    // printf("ObfDspParams->inputs.pImpl.color_y_max_lut:%x\n", ObfDspParams->inputs.pImpl.color_y_max_lut);
-    // printf("ObfDspParams->inputs.pImpl.color_y_min_lut:%x\n", ObfDspParams->inputs.pImpl.color_y_min_lut);
-
-    ObfDspParams->inputs.pImpl.d2c_param_.depth_undist_switch = false;
-    ObfDspParams->inputs.pImpl.d2c_param_.rgb_undist_switch = false;
-    ObfDspParams->inputs.pImpl.d2c_param_.isDepthMirror = false;
-    ObfDspParams->inputs.pImpl.d2c_param_.depth_unit_mm = 1;
-    ObfDspParams->inputs.pImpl.d2c_param_.enable_gap_fill = false;
-    ObfDspParams->inputs.pImpl.d2c_param_.enable_depth_Copy4 = true;
-    ObfDspParams->inputs.pImpl.d2c_param_.depth_min_value = 1;
-    ObfDspParams->inputs.pImpl.d2c_param_.depth_max_value = 10000;
-
-    ObfDspParams->inputs.pImpl.param_loaded_ = true;
-
-
-    ObfDspParams->inputs.pImpl.width_ = 960;
-    ObfDspParams->inputs.pImpl.height_ = 1280;
-
-    ObfDspParams->inputs.constInputs.buf = ion_mem_info[TOF_DspUse_MEM].pa;
-    ObfDspParams->outputs.img_crop_dst = ion_mem_info[TOF_depth1_MEM].pa;
-
-    free(linear_rot_coeff_ht);
-    free(color_y_max_lut);
-    free(color_y_min_lut);
-    fclose(Param_data);
-
-    return 0;
-
-#endif
 }
 /*****************************************************************************
 *   Prototype    : init_tof_buffer
@@ -709,38 +700,30 @@ int dsp_D2Cparams_init(ObTofDspParams *ObfDspParams, Depth2Color_pixFormat pixFo
 *   Output       : 
 *   Return Value :
 *****************************************************************************/
-int init_tof_buffer(void)
+int init_tof_buffer(Depth2Color_pixFormat pixFormat, bool d2c_enable, softfilterParam softfilter_Param)
 {
     unsigned long long t1,t2;
+    
     /* 初始化ION空间 */
-    ar_ion_init(AR_DSP_HEAP_ID);
-    /* 清空icc通信消息队列 */
-    memset(&icc_msg, 0, sizeof(icc_msg));
-    /* 申请并清空memory */
-    for (int i = 0; i < sizeof(mem_list) / sizeof(struct mem_list_t); i++)
-    {
-        if (do_alloc_ion(&ion_mem_info[mem_list[i].mem_name], mem_list[i].mem_len) < 0)
+    if (init_count)
+    {        
+        ar_ion_init(AR_DSP_HEAP_ID);
+
+        /* 清空icc通信消息队列 */
+        memset(&icc_msg, 0, sizeof(icc_msg));
+        /* 申请并清空memory */
+        for (int i = 0; i < sizeof(mem_list) / sizeof(struct mem_list_t); i++)
         {
-            ERR("[err]ION memory alloc failed!\n");
-            return -1;
+            if (do_alloc_ion(&ion_mem_info[mem_list[i].mem_name], mem_list[i].mem_len) < 0)
+            {
+                ERR("ION memory alloc failed!\n");
+                return -1;
+            }
         }
+        INFO("ION memory alloc success!\n");
+        init_count = false;
     }
-    INFO("[ION] memory alloc Success!\n");
 
-    /* --------------更新 tofdspParams------------------------ */
-    // dsp_params_deinit((ObTofDspParams *)ion_mem_info[TOF_DspParams_MEM].va);
-    // debug_info_tofparams_msg(ion_mem_info[TOF_DspParams_MEM].va); //printf and check
-    Depth2Color_pixFormat pixFormat;
-
-	pixFormat.color_width = 480;
-	pixFormat.color_height = 640;
-	pixFormat.depth_width = 480;
-	pixFormat.depth_height = 640;
-
-    // t1 = get_current_time();
-
-    // t2 = get_current_time();
-    // INFO("dspParams init cost time %luus\n", t2 - t1);
     /* --------------更新 icc_msg---------------------------- */
     icc_msg.id = 0;
     icc_msg.type = 1;
@@ -752,9 +735,11 @@ int init_tof_buffer(void)
     icc_msg.params.algorithm.packet_phys = ion_mem_info[TOF_DspParams_MEM].pa;
     icc_msg.params.algorithm.packet_virt = ion_mem_info[TOF_DspParams_MEM].va;
 
-    if (dsp_D2Cparams_init((ObTofDspParams *)ion_mem_info[TOF_DspParams_MEM].va, pixFormat) < 0)
-        return -1;
 
+    if (dsp_D2Cparams_init((ObTofDspParams *)ion_mem_info[TOF_DspParams_MEM].va,
+                           pixFormat, d2c_enable, softfilter_Param) < 0)
+        return -1;
+    all_ion_cache_flush(TOF_DspParams_MEM);
     return 0;
 }
 /*****************************************************************************
@@ -775,7 +760,7 @@ int all_ion_cache_flush(uint8_t usr_ion_mem_num)
                                     ion_mem_info[mem_list[i].mem_name].va, 
                                     ion_mem_info[mem_list[i].mem_name].len);
         if(ret < 0){
-            printf("ion_cache_flush filed. mem is %d\n", i);
+            ERR("ion_cache_flush filed. mem is %d\n", i);
             return ret;
         }
     }
@@ -785,7 +770,7 @@ int all_ion_cache_flush(uint8_t usr_ion_mem_num)
                                       ion_mem_info[mem_list[usr_ion_mem_num].mem_name].len);
     if (ret < 0)
     {
-        printf("ion_cache_flush filed. mem is %d\n", usr_ion_mem_num);
+        ERR("ion_cache_flush filed. mem is %d\n", usr_ion_mem_num);
         return ret;
     }
 #endif
@@ -809,7 +794,7 @@ int all_ion_cache_invalid(uint8_t usr_ion_mem_num)
                                     ion_mem_info[mem_list[i].mem_name].va, 
                                     ion_mem_info[mem_list[i].mem_name].len);
         if(ret < 0){
-            printf("cache_invalid filed. mem is %d\n", i);
+            ERR("cache_invalid filed. mem is %d\n", i);
             return ret;
         }
     }
@@ -819,7 +804,7 @@ int all_ion_cache_invalid(uint8_t usr_ion_mem_num)
                                         ion_mem_info[mem_list[usr_ion_mem_num].mem_name].len);
     if (ret < 0)
     {
-        printf("cache_invalid filed. mem is %d\n", usr_ion_mem_num);
+        ERR("cache_invalid filed. mem is %d\n", usr_ion_mem_num);
         return ret;
     }
 #endif
@@ -840,9 +825,9 @@ int release_tof_buffer(void)
     {
         if (AR_RELEASE_ION_MEMORY(ion_mem_info[mem_list[i].mem_name].va) < 0)
         {
-            printf("[err]ION memory release failed!\n");
+            ERR("ION memory release failed!\n");
             return -1;
         }
     }
-    printf("[ION] memory release Success!\n");
+    INFO("ION memory release success!\n");
 }

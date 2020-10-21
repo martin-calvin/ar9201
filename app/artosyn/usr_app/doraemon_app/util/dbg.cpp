@@ -34,6 +34,7 @@
 #include "basic_typedef.h"
 #include "utils.h"
 #include "softfilter.h"
+#include "libyuv.h"
 
 
 /*==============================================*
@@ -327,13 +328,210 @@ END:
     INFO("Exit!\n");
 }
 
- 
+
+static void memcpy_ext(void *dest, const void *src, size_t count)
+{
+	unsigned long *dl = (unsigned long *)dest, *sl = (unsigned long *)src;
+	char *d8, *s8;
+
+	/* while all data is aligned (common case), copy a word at a time */
+	if ( (((ulong)dest | (ulong)src) & (sizeof(*dl) - 1)) == 0) {
+		while (count >= sizeof(*dl)) {
+			*dl++ = *sl++;
+			count -= sizeof(*dl);
+		}
+	}
+	/* copy the reset one byte at a time */
+	d8 = (char *)dl;
+	s8 = (char *)sl;
+	while (count--)
+		*d8++ = *s8++;
+}
+
+
+
+void dbg_libyuv_test_func(char *param)
+{  
+    int ret = 0;
+    uint32_t input_file_size = 0;
+    uint32_t output_file_size = 0;
+    uint8_t *pBuffIn = NULL;
+    uint8_t *pBuffOut = NULL;
+    char name_in[]  = "/storage/3840x2160.i420";  
+    char name_out[] = "/mnt/sdcard/1280x720.i420";
+
+    //[1] open input file
+    FILE *fp = fopen(name_in, "rb");
+    if (!fp){
+        ERR("open %s fail.\n", name_in);
+        goto END;
+    }
+
+    //[2] get input file's size
+    fseek(fp, 0, SEEK_END);
+    input_file_size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    printf("input file's size:%d\n", input_file_size);
+
+    //[3] read input file to memory
+    pBuffIn = (uint8_t *)malloc(input_file_size);
+    if (NULL == pBuffIn){
+        ERR("No memory!\n");
+        goto END;
+    }
+    ret = fread(pBuffIn, 1, input_file_size, fp);
+    if (ret < 0){
+        ERR("read file failed, ret:%d\n", ret);
+        goto END;
+    }
+
+    //[4] prepare output buff space
+    output_file_size = 1280*720*1.5;
+    pBuffOut = (uint8_t *)malloc(output_file_size);
+    if (NULL == pBuffOut){
+        ERR("No memory!\n");
+        goto END;
+    }
+
+
+    //[5] process
+    for (int i = 0; i < 100; i++)
+    {
+#if 1
+        //裁剪后的i420
+        uint32 cropX = 0;
+        uint32 cropY = 0;
+        uint32 cropWidth = 1280;
+        uint32 cropHeight = 720;
+        uint8_t *i420_image_rotated = pBuffOut ;
+        uint8_t *i420_image_rotated_y_ptr = i420_image_rotated;
+        uint8_t *i420_image_rotated_u_ptr = i420_image_rotated_y_ptr + (cropWidth * cropHeight);
+        uint8_t *i420_image_rotated_v_ptr = i420_image_rotated_u_ptr + (int)(cropHeight * cropWidth * 0.25);
+
+
+        struct timeval tm1;
+        struct timeval tm2;
+        long usec1 = 0;
+        gettimeofday(&tm1, NULL);
+
+        //crop test
+        memcpy(pBuffOut, pBuffIn, output_file_size);
+        //memcpy_ext(pBuffOut, pBuffIn, output_file_size);
+
+        /*
+        libyuv::ConvertToI420(pBuffIn, 
+                              input_file_size, 
+                              
+                              i420_image_rotated_y_ptr, //uint8_t * dst_y, 
+                              cropWidth,    //int dst_stride_y, 
+                              
+                              i420_image_rotated_u_ptr, //uint8_t * dst_u, 
+                              cropWidth>>1,    //int dst_stride_u, 
+                              
+                              i420_image_rotated_v_ptr, //uint8_t * dst_v, 
+                              cropWidth>>1,    //int dst_stride_v, 
+                              
+                              cropX,       //int crop_x, 
+                              cropY,       //int crop_y, 
+                              
+                              3840,    //int src_width, 
+                              2160,    //int src_height,
+                              
+                              cropWidth,    //int crop_width, 
+                              cropHeight,     //int crop_height,
+                              
+                              libyuv::kRotate0,
+                              libyuv::FOURCC_I420);*/
+
+        gettimeofday(&tm2, NULL);
+        usec1 = 1000000 * (tm2.tv_sec - tm1.tv_sec) + (tm2.tv_usec - tm1.tv_usec);
+        printf("[%d] cost_time=%ldus\n", i, usec1);
+
+        usleep(33*1000);
+#endif
+
+
+#if 0
+        uint32_t srcWidth = 3840;
+        uint32_t srcHeight = 2160;
+        u8 *src = pBuffIn;
+        uint32_t outWidth = 1280;
+        uint32_t outHeight = 720;
+
+        uint32_t src_i420_y_size = srcWidth * srcHeight;
+        uint32_t src_i420_u_size = ( srcWidth >> 1 ) * ( srcHeight >> 1 );
+        uint8_t* src_i420_y_data = src;
+        uint8_t* src_i420_u_data = src + src_i420_y_size;
+        uint8_t* src_i420_v_data = src + src_i420_y_size + src_i420_u_size;
+        
+        uint32_t   dst_i420_y_size = outWidth * outHeight;
+        uint32_t   dst_i420_u_size = ( outWidth >> 1 ) * ( outHeight >> 1 );
+        uint8_t*   dst_i420_y_data = pBuffOut;
+        uint8_t*   dst_i420_u_data = pBuffOut + dst_i420_y_size;
+        uint8_t*   dst_i420_v_data = pBuffOut + dst_i420_y_size + dst_i420_u_size;
+
+        struct timeval tm3;
+        struct timeval tm4;
+        long usec2 = 0;
+        gettimeofday(&tm3, NULL);
+
+        //scale test
+        libyuv::I420Scale(src_i420_y_data, //const uint8_t * src_y, 
+                          srcWidth,        //int src_stride_y, 
+                          src_i420_u_data, //const uint8_t * src_u, 
+                          srcWidth >> 1,   //int src_stride_u, 
+                          src_i420_v_data, //const uint8_t * src_v, 
+                          srcWidth >> 1,   //int src_stride_v, 
+                          srcWidth,        //int src_width, 
+                          srcHeight,       //int src_height, 
+                          dst_i420_y_data, //uint8_t* dst_y,
+                          outWidth,        //int dst_stride_y,
+                          dst_i420_u_data, //uint8_t* dst_u,
+                          outWidth >> 1,   //int dst_stride_u,
+                          dst_i420_v_data, //uint8_t* dst_v,
+                          outWidth >> 1,   //int dst_stride_v,
+                          outWidth,        //int dst_width,
+                          outHeight,       //int dst_height,
+                          libyuv::kFilterNone);
+        
+        gettimeofday(&tm4, NULL);
+        usec2 = 1000000 * (tm4.tv_sec - tm3.tv_sec) + (tm4.tv_usec - tm3.tv_usec);
+        printf("[%d] cost_time=%ldus\n", i, usec2);
+
+        usleep(33*1000);
+#endif
+
+    }
+
+    ob_util_dumpToFile((char *)pBuffOut, output_file_size, name_out);
+
+
+END:
+    //=====> release buff
+    if (NULL != fp){
+        fclose(fp);
+        fp = NULL;
+    }
+
+    if (NULL != pBuffIn){
+        free(pBuffIn);
+        pBuffIn = NULL;
+    }
+
+    if (NULL != pBuffOut){
+        free(pBuffOut);
+        pBuffOut = NULL;
+    }
+}
+
+
 /* dbg cmd list*/
 static dbg_cmd m_cmd_list[MAX_DBG_CMD_NUM + 1] = {
     {"help",                "0 - help [param]       //debug help info",        dbg_cmd_help_func},
     {"init",                "1 - init               //App Init",               dbg_cmd_init_func},
     {"init",                "2 - cmd test                     ",               dbg_cmd_test_func},
     {"init",                "3 - soft filter test             ",               dbg_softfilter_test_func},
+    {"yuvtest",             "4 - libyuv test                  ",               dbg_libyuv_test_func},
     {"NULL",                "NULL",                                            NULL},
 };
  

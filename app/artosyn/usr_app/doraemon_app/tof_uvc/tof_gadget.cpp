@@ -61,6 +61,9 @@ extern "C"{
 #define ORBBEC_STREAM_TYPE_NONE          0
 #define ORBBEC_STREAM_TYPE_DEPTH         1
 #define ORBBEC_STREAM_TYPE_IR            2
+
+#define TOF_UVC_BUFFER_QUEUE_NUM    (3)
+
  /*==============================================*
   *      project-wide global variables           *
   *----------------------------------------------*/
@@ -99,7 +102,7 @@ static void *tof_uvc_gadget_events_poll_thd(void *arg)
     }
 
     udev->io = IO_METHOD_MMAP;
-    udev->nbufs = 4;
+    udev->nbufs = TOF_UVC_BUFFER_QUEUE_NUM;
 
     pService->pollrun = 1;
     while (1 == pService->pollrun)

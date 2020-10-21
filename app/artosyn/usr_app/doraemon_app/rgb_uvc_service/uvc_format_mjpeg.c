@@ -5,6 +5,7 @@
 #include "uvc_service2.h"
 #include "pipeline_service.h"
 #include "ar_log.h"
+#include "logutil.h"
 
 static int uvc_mjpeg_deinit(uvc_format_data_t *data, ar_mm_handle_t handle);
 
@@ -26,16 +27,20 @@ static int uvc_mjpeg_init(uvc_format_data_t *data, ar_mm_handle_t handle, int ar
 
     while(server_l->run_flag)
     {
-        sprintf(path, __UVC_SINK_PATH__, server_l->pipe_index);
+        if(server_l->preview_pad_output)
+            sprintf(path, __UVC_SINK_PATH__PREVIEW, server_l->pipe_index);
+        else
+            sprintf(path, __UVC_SINK_PATH__VIDEO, server_l->pipe_index);
+           
         uvc_mjpeg_vs_handle = ar_video_stream_open(path);
         if (!uvc_mjpeg_vs_handle)
         {
-            log_err("pid %d open %s failed!\n", getpid(), path);
-            usleep(10 * 1000);
+            ERR("pid open %s failed!\n", path);
+            usleep(50 * 1000);
             time_out++;
-            if(time_out > 500)
+            if(time_out > 100)
             {
-                log_err("pid %d open %s failed! 5s exit the uvc\n", getpid(), path);
+                ERR("pid open %s failed! 5s exit the uvc\n", path);
                 goto MJPEG_INIT_FAILED;
             }
         }
@@ -50,7 +55,7 @@ static int uvc_mjpeg_init(uvc_format_data_t *data, ar_mm_handle_t handle, int ar
     ret = ar_video_stream_set_min_align_size(data->vs_handle, MAX_BUFFER_SIZE);
     if(ret != 0)
     {
-        log_err("pid %d set ar_video_stream min align failed!\n", getpid());
+        ERR("pid %d set ar_video_stream min align failed!\n", getpid());
         goto MJPEG_INIT_FAILED;
     }
 
@@ -93,7 +98,6 @@ static struct uvc_frame_buf_info *uvc_mjpeg_get_frame(uvc_format_data_t *data)
         return NULL;
     }
 
-    //todo: 去掉每帧malloc
     buf_info = (struct uvc_frame_buf_info *)malloc(sizeof(struct uvc_frame_buf_info));
     if(NULL == buf_info)
     {

@@ -75,16 +75,15 @@ pthread_mutex_t ob_ir_resolution_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t ob_depth_resolution_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t ob_stream_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t  g_stream_control_mutex;
+static pthread_mutex_t  g_uvc_frame_drop_mutex;
 
 
 /*==============================================*
  *      routines' or functions' implementations *
  *----------------------------------------------*/
-static int32_t ob_stream_on_op(EM_DATA_TYPE data_type);
-static int32_t ob_stream_off_op(EM_DATA_TYPE data_type);
 
 
-static uint32_t ob_mx6300_stream_switch(uint32_t type, uint8_t img_fps)
+uint32_t ob_mx6300_stream_switch(uint32_t type, uint8_t img_fps)
 {
     switch (type)
     {
@@ -136,12 +135,12 @@ static int32_t uvc_video_stream(struct tof_uvc_device *dev, int dev_index, int32
 
     ret = ioctl(dev->fd, VIDIOC_STREAMON, &type);
     if (ret < 0) {
-        printf("UVC: Unable to start streaming %s (%d).\n",
+        ERR("UVC: Unable to start streaming %s (%d).\n",
                strerror(errno), errno);
         return ret;
     }
 
-    printf("UVC: Starting video stream.\n");
+    INFO("UVC: Starting video stream.\n");
 
     return 0;
 }
@@ -156,7 +155,7 @@ static int uvc_uninit_device(struct tof_uvc_device *dev)
         ret = munmap(dev->mem[i].start, dev->mem[i].length);
         if (ret < 0)
         {
-            printf("UVC: munmap failed\n");
+            ERR("UVC: munmap failed\n");
             return ret;
         }
     }
@@ -171,7 +170,7 @@ static int uvc_uninit_device(struct tof_uvc_device *dev)
     //             ret = munmap(dev->mem[i].start, dev->mem[i].length);
     //             if (ret < 0)
     // 			{
-    //                 printf("UVC: munmap failed\n");
+    //                 ERR("UVC: munmap failed\n");
     //                 return ret;
     //             }
     //         }
@@ -209,11 +208,11 @@ static int uvc_video_qbuf_mmap(struct tof_uvc_device *dev)
         dev->mem[i].buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
         dev->mem[i].buf.memory = V4L2_MEMORY_MMAP;
         dev->mem[i].buf.index = i;
-        dev->mem[i].buf.bytesused = dev->mem[i].length;
+        dev->mem[i].buf.bytesused = 512;//dev->mem[i].length; //默认前几帧发全为0的空帧(512字节)作为开始
    
         ret = ioctl(dev->fd, VIDIOC_QBUF, &(dev->mem[i].buf));
         if (ret < 0) {
-            printf("UVC: VIDIOC_QBUF failed : %s (%d).\n",
+            ERR("UVC: VIDIOC_QBUF failed : %s (%d).\n",
                    strerror(errno), errno);
             return ret;
         }
@@ -243,7 +242,7 @@ static int uvc_video_qbuf_userptr(struct tof_uvc_device *dev)
 
             ret = ioctl(dev->fd, VIDIOC_QBUF, &buf);
             if (ret < 0) {
-                printf("UVC: VIDIOC_QBUF failed : %s (%d).\n",
+                ERR("UVC: VIDIOC_QBUF failed : %s (%d).\n",
                        strerror(errno), errno);
                 return ret;
             }
@@ -292,9 +291,9 @@ static int uvc_video_reqbufs_mmap(struct tof_uvc_device *dev, int nbufs)
     ret = ioctl(dev->fd, VIDIOC_REQBUFS, &rb);
     if (ret < 0) {
         if (ret == -EINVAL)
-            printf("UVC: does not support memory mapping\n");
+            ERR("UVC: does not support memory mapping\n");
         else
-            printf("UVC: Unable to allocate buffers: %s (%d).\n",
+            ERR("UVC: Unable to allocate buffers: %s (%d).\n",
                    strerror(errno), errno);
         goto err;
     }
@@ -303,7 +302,7 @@ static int uvc_video_reqbufs_mmap(struct tof_uvc_device *dev, int nbufs)
         return 0;
 
     if (rb.count < 2) {
-        printf("UVC: Insufficient buffer memory.\n");
+        ERR("UVC: Insufficient buffer memory.\n");
         ret = -EINVAL;
         goto err;
     }
@@ -311,7 +310,7 @@ static int uvc_video_reqbufs_mmap(struct tof_uvc_device *dev, int nbufs)
     /* Map the buffers. */
     dev->mem = (struct buffer *)calloc(rb.count, sizeof dev->mem[0]);
     if (!dev->mem) {
-        printf("UVC: Out of memory\n");
+        ERR("UVC: Out of memory\n");
         ret = -ENOMEM;
         goto err;
     }
@@ -325,7 +324,7 @@ static int uvc_video_reqbufs_mmap(struct tof_uvc_device *dev, int nbufs)
 
         ret = ioctl(dev->fd, VIDIOC_QUERYBUF, &(dev->mem[i].buf));
         if (ret < 0) {
-            printf("UVC: VIDIOC_QUERYBUF failed for buf %d: "
+            ERR("UVC: VIDIOC_QUERYBUF failed for buf %d: "
                    "%s (%d).\n", i, strerror(errno), errno);
             ret = -EINVAL;
             goto err_free;
@@ -338,7 +337,7 @@ static int uvc_video_reqbufs_mmap(struct tof_uvc_device *dev, int nbufs)
                                  dev->fd, dev->mem[i].buf.m.offset);
 
         if (MAP_FAILED == dev->mem[i].start) {
-            printf("UVC: Unable to map buffer %u: %s (%d).\n", i,
+            ERR("UVC: Unable to map buffer %u: %s (%d).\n", i,
                    strerror(errno), errno);
             dev->mem[i].length = 0;
             ret = -EINVAL;
@@ -346,12 +345,12 @@ static int uvc_video_reqbufs_mmap(struct tof_uvc_device *dev, int nbufs)
         }
 
         dev->mem[i].length = dev->mem[i].buf.length;
-        printf("UVC: Buffer %u mapped at address %p.\n", i,
+        INFO("UVC: Buffer %u mapped at address %p.\n", i,
                dev->mem[i].start);
     }
 
     dev->nbufs = rb.count;
-    printf("UVC: %u buffers allocated.\n", rb.count);
+    INFO("UVC: %u buffers allocated.\n", rb.count);
 
     return 0;
 
@@ -376,9 +375,9 @@ static int uvc_video_reqbufs_userptr(struct tof_uvc_device *dev, int nbufs)
     ret = ioctl(dev->fd, VIDIOC_REQBUFS, &rb);
     if (ret < 0) {
         if (ret == -EINVAL)
-            printf("UVC: does not support user pointer i/o\n");
+            ERR("UVC: does not support user pointer i/o\n");
         else
-            printf("UVC: VIDIOC_REQBUFS error %s (%d).\n",
+            ERR("UVC: VIDIOC_REQBUFS error %s (%d).\n",
                    strerror(errno), errno);
         goto err;
     }
@@ -387,7 +386,7 @@ static int uvc_video_reqbufs_userptr(struct tof_uvc_device *dev, int nbufs)
         return 0;
 
     dev->nbufs = rb.count;
-    printf("UVC: %u buffers allocated.\n", rb.count);
+    INFO("UVC: %u buffers allocated.\n", rb.count);
     
     return 0;
 
@@ -514,17 +513,26 @@ static void *ob_stop_uvc_by_frame_drop_thd(void *arg)
 {
     struct tof_uvc_device *dev = (struct tof_uvc_device *)arg;
 
-    DBG("[devID:%d] frame drop trigger ==> UVC_EVENT_STREAMOFF\n", dev->pService->dev_index);
-    
-    if (dev->pService->dev_index == OB_UVC_DEVICE_NODE_NUM_IR)
-        ob_stream_off_op(TYPE_IR);
-    else if(dev->pService->dev_index == OB_UVC_DEVICE_NODE_NUM_DEPTH)
-        ob_stream_off_op(TYPE_DEPTH);
-    else
-        ERR("dev index:%d\n", dev->pService->dev_index);
-    
-    DBG("[devID:%d] frame drop trigger stop stream success!\n", dev->pService->dev_index);
+    if (0 == pthread_mutex_trylock(&g_uvc_frame_drop_mutex))
+    {
+        INFO("[devID:%d] frame drop trigger ==> UVC_EVENT_STREAMOFF\n", dev->pService->dev_index);
+        
+        if (dev->pService->dev_index == OB_UVC_DEVICE_NODE_NUM_IR)
+            ob_stream_off_op(TYPE_IR);
+        else if(dev->pService->dev_index == OB_UVC_DEVICE_NODE_NUM_DEPTH)
+            ob_stream_off_op(TYPE_DEPTH);
+        else
+            ERR("dev index:%d\n", dev->pService->dev_index);
+        
+        INFO("[devID:%d] frame drop trigger stop stream success!\n", dev->pService->dev_index);
 
+        pthread_mutex_unlock(&g_uvc_frame_drop_mutex);
+    }
+    else
+    {
+        WARN("[devID:%d] xavier, try lock failed!\n", dev->pService->dev_index);
+    }
+    
     return NULL;
 }
 
@@ -582,6 +590,13 @@ int uvc_video_send_process(struct tof_uvc_device *dev, void *data, unsigned int 
             return ret;
         }
 
+        //static unsigned int s_last_pts = 0;
+        //unsigned int deltT = pts - s_last_pts;
+        //printf("depth, pts:%d(0x%x)(%d)\n", pts, pts, deltT ); 
+        //if (deltT > 40)
+        //    INFO("=======depth drop========(%d, %d)\n", s_last_pts,  pts);
+        //s_last_pts =  pts;
+
         dev->pService->u32FrameDropCount = 0;
     }
     else
@@ -631,13 +646,13 @@ struct tof_uvc_device *ob_tof_uvc_open(const char *devname)
         return NULL;
     }
 
-    printf("***********************Device info*********************\n");
-    printf("device is %s on bus %s\n", cap.card, cap.bus_info);
-    printf("device driver      : \t%s\n", cap.driver);
-    printf("device card        : \t%s\n", cap.card);
-    printf("device capabilities: \t0x%08x\n", cap.capabilities);
-    printf("device device_caps : \t0x%08x\n", cap.device_caps);
-    printf("*******************************************************\n");
+    INFO("***********************Device info*********************\n");
+    INFO("device is %s on bus %s\n", cap.card, cap.bus_info);
+    INFO("device driver      : \t%s\n", cap.driver);
+    INFO("device card        : \t%s\n", cap.card);
+    INFO("device capabilities: \t0x%08x\n", cap.capabilities);
+    INFO("device device_caps : \t0x%08x\n", cap.device_caps);
+    INFO("*******************************************************\n");
 
     dev = (tof_uvc_device *)malloc(sizeof *dev);
     if (dev == NULL) {
@@ -673,7 +688,7 @@ void ob_tof_uvc_close(struct tof_uvc_device *dev)
     pthread_mutex_destroy(&ob_stream_mutex);
 }
 
-
+#if 0
 /*****************************************************************************
 *   Prototype    : ob_tof_uvc_video_stream
 *   Description  : orbbec tof uvc video stream control
@@ -726,7 +741,7 @@ static int ob_tof_uvc_video_stream(struct tof_uvc_device *dev, int enable)
     
     return ret;
 }
-
+#endif
 
 /*****************************************************************************
 *   Prototype    : ob_tof_uvc_video_reqbufs
@@ -810,7 +825,7 @@ static void ob_tof_uvc_events_process_control(struct tof_uvc_device *dev, uint8_
     uint32_t ob_exposure = 0;
     uint32_t ob_gain = 0;
 
-    //printf("xavier sl get: entity_id:%d, cs:0x%02x, req:0x%02x, len:0x%02x(%d)\n", entity_id, cs, req, len, len);
+    //INFO("xavier sl get: entity_id:%d, cs:0x%02x, req:0x%02x, len:0x%02x(%d)\n", entity_id, cs, req, len, len);
 
     switch (entity_id) 
     {
@@ -948,7 +963,7 @@ static void ob_tof_uvc_events_process_control(struct tof_uvc_device *dev, uint8_
 
                         case UVC_GET_MIN:
                             p = (unsigned int *)resp->data;
-                            *p = 310;
+                            *p = 1;
                             resp->length = 4;
 
                             dev->request_error_code.data[0] = 0x00;
@@ -957,7 +972,7 @@ static void ob_tof_uvc_events_process_control(struct tof_uvc_device *dev, uint8_
 
                         case UVC_GET_MAX:
                             p = (unsigned int *)resp->data;
-                            *p = 10000;
+                            *p = 330;
                             resp->length = 4;
 
                             dev->request_error_code.data[0] = 0x00;
@@ -1473,7 +1488,7 @@ static void ob_tof_uvc_events_process_setup(struct tof_uvc_device *dev, struct u
 {
     dev->control = 0;
 
-    // printf("pid %d bRequestType %02x bRequest %02x wValue %04x wIndex %04x "
+    // INFO("pid %d bRequestType %02x bRequest %02x wValue %04x wIndex %04x "
     //    "wLength %04x\n",getpid(), ctrl->bRequestType, ctrl->bRequest,
     //   ctrl->wValue, ctrl->wIndex, ctrl->wLength);
 
@@ -1511,7 +1526,7 @@ static int ob_tof_uvc_events_process_control_data(struct tof_uvc_device *dev, ui
     tof_uvc_service *server_l = dev->pService;
 
     unsigned int *val = (unsigned int *)data->data;
-    //printf("xavier sl set, entity_id:%d, cs:0x%02x, data:%d, length:%d\n", entity_id, cs, *val, data->length);
+    //INFO("xavier sl set, entity_id:%d, cs:0x%02x, data:%d, length:%d\n", entity_id, cs, *val, data->length);
 
     if(0 == server_l->run_flag)
     {
@@ -1529,9 +1544,9 @@ static int ob_tof_uvc_events_process_control_data(struct tof_uvc_device *dev, ui
                     break;
 
                 case UVC_CT_EXPOSURE_TIME_ABSOLUTE_CONTROL:
-                    *val = (((*val) * 100 * 48) + 180) / 1514;
-                    Mx6300_set_ir_exposure(*val);
                     DBG("set ir exposure:%d\n", *val);
+                    *val = (((*val) * 100 * 48) + 180) / 1514;
+                    Mx6300_set_ir_exposure(*val);                    
                     break;
 
                 case UVC_CT_ZOOM_ABSOLUTE_CONTROL:
@@ -1626,8 +1641,7 @@ int ob_tof_uvc_video_set_format(struct tof_uvc_device *dev, int dev_index)
     fmt.fmt.pix.pixelformat = dev->fcc;
     fmt.fmt.pix.field = V4L2_FIELD_NONE;
 
-    Depth2Color_pixFormat pixFormat;
-    
+
     if (dev->fcc == V4L2_PIX_FMT_MJPEG)
         fmt.fmt.pix.sizeimage = TOF_UVC_MAX_BUFFER_SIZE;
     if(dev->fcc == V4L2_PIX_FMT_YUYV)
@@ -1636,7 +1650,7 @@ int ob_tof_uvc_video_set_format(struct tof_uvc_device *dev, int dev_index)
         switch (dev_index)
         {
             case OB_UVC_DEVICE_NODE_NUM_DEPTH:
-                img_fps = 1 / (img_fps / pow(10,7));
+                img_fps = 1 / (img_fps / pow(10, 7));
                 ob_streamControl.frameRate = (uint8_t)img_fps;
                 if ((dev->width == 960) && (dev->height == 1280))
                 {
@@ -1645,13 +1659,11 @@ int ob_tof_uvc_video_set_format(struct tof_uvc_device *dev, int dev_index)
                     ob_streamControl.depth_inputImage_width = 960;
                     ob_streamControl.depth_inputImage_height = dev->height;
                     // INFO("set depth resolution 960*1280\n");
-                    if (ob_streamControl.depthSoftD2C_enable)
-                    {
-                        pixFormat.color_width = 960;
-                        pixFormat.color_height = 1280;
-                        pixFormat.depth_width = 960;
-                        pixFormat.depth_height = 1280;
-                    }
+
+                    ob_streamControl.d2c_pixFormat.color_width = 960;
+                    ob_streamControl.d2c_pixFormat.color_height = 1280;
+                    ob_streamControl.d2c_pixFormat.depth_width = 960;
+                    ob_streamControl.d2c_pixFormat.depth_height = 1280;
                 }
                 else if ((dev->width == 720) && (dev->height == 1280))
                 {
@@ -1660,13 +1672,12 @@ int ob_tof_uvc_video_set_format(struct tof_uvc_device *dev, int dev_index)
                     ob_streamControl.depth_inputImage_width = 960;
                     ob_streamControl.depth_inputImage_height = dev->height;
                     // INFO("set depth resolution 720*1280\n");
-                    if (ob_streamControl.depthSoftD2C_enable)
-                    {
-                        pixFormat.color_width = 720;
-                        pixFormat.color_height = 1280;
-                        pixFormat.depth_width = 960;
-                        pixFormat.depth_height = 1280;
-                    }
+
+                    ob_streamControl.d2c_pixFormat.color_width = 720;
+                    ob_streamControl.d2c_pixFormat.color_height = 1280;
+                    ob_streamControl.d2c_pixFormat.depth_width = 960;
+                    ob_streamControl.d2c_pixFormat.depth_height = 1280;
+
                 }
                 else if ((dev->width == 480) && (dev->height == 640))
                 {
@@ -1675,13 +1686,11 @@ int ob_tof_uvc_video_set_format(struct tof_uvc_device *dev, int dev_index)
                     ob_streamControl.depth_inputImage_width = dev->width;
                     ob_streamControl.depth_inputImage_height = dev->height;
                     // INFO("set depth resolution 480*640\n");
-                    if (ob_streamControl.depthSoftD2C_enable)
-                    {
-                        pixFormat.color_width = 480;
-                        pixFormat.color_height = 640;
-                        pixFormat.depth_width = 480;
-                        pixFormat.depth_height = 640;
-                    }
+
+                    ob_streamControl.d2c_pixFormat.color_width = 480;
+                    ob_streamControl.d2c_pixFormat.color_height = 640;
+                    ob_streamControl.d2c_pixFormat.depth_width = 480;
+                    ob_streamControl.d2c_pixFormat.depth_height = 640;
                 }
                 else
                 {
@@ -1696,7 +1705,7 @@ int ob_tof_uvc_video_set_format(struct tof_uvc_device *dev, int dev_index)
                 break;
                 
             case OB_UVC_DEVICE_NODE_NUM_IR:
-                img_fps = 1 / (img_fps / pow(10,7));
+                img_fps = 1 / (img_fps / pow(10, 7));
                 ob_streamControl.frameRate = (uint8_t)img_fps;
                 if ((dev->width == 1280) && (dev->height == 960))
                 {
@@ -1730,9 +1739,13 @@ int ob_tof_uvc_video_set_format(struct tof_uvc_device *dev, int dev_index)
         ERR("Unable to set format: %s (%d).\n", strerror(errno), errno);
     }
 
-    if (ob_streamControl.depthSoftD2C_enable)
+    if (!(ob_streamControl.depthSoftD2C_enable) && !(ob_streamControl.softfilter_Param.softfilterEnable))
     {
-        ob_dsp_loadParam(pixFormat);
+        return ret;
+    }
+    else
+    {
+        ob_dsp_loadParam(ob_streamControl.d2c_pixFormat, ob_streamControl.depthSoftD2C_enable, ob_streamControl.softfilter_Param);
     }
     return ret;
 }
@@ -1771,7 +1784,7 @@ static void ob_tof_uvc_events_process_data(struct tof_uvc_device *dev, struct uv
 
         default:
             //log_info("setting unknown control, length = %d\n", data->length);
-            //printf("cs: %u, entity_id: %u\n", dev->cs, dev->entity_id);
+            //INFO("cs: %u, entity_id: %u\n", dev->cs, dev->entity_id);
             ob_tof_uvc_events_process_control_data(dev,
                                          dev->cs,
                                          dev->entity_id,
@@ -1845,7 +1858,7 @@ static void ob_tof_uvc_events_process_data(struct tof_uvc_device *dev, struct uv
             dev->frame_interval != target->dwFrameInterval || \
             (dev->fcc != format->fcc || V4L2_PIX_FMT_H264 == dev->fcc || V4L2_PIX_FMT_HEVC == dev->fcc)) 
         {
-            DBG("[devID:%d] xavier, uvc host set new Format\n\n", pService->dev_index);
+            INFO("[devID:%d] xavier, uvc host set new Format\n\n", pService->dev_index);
             dev->width          = frame->width;
             dev->height         = frame->height;
             dev->frame_interval = target->dwFrameInterval;
@@ -1855,10 +1868,10 @@ static void ob_tof_uvc_events_process_data(struct tof_uvc_device *dev, struct uv
         if (dev->bulk)
         {
             //开流之前强制尝试关闭所有流(ir and depth)
-            DBG("stop last stream first!\n");
+            INFO("stop last stream first!\n");
             ob_stream_off_op(TYPE_DEPTH);
             ob_stream_off_op(TYPE_IR);
-            DBG("stop last stream success!\n");
+            INFO("stop last stream success!\n");
         }           
 
         ob_tof_uvc_video_set_format(dev, dev_index);
@@ -1868,7 +1881,8 @@ static void ob_tof_uvc_events_process_data(struct tof_uvc_device *dev, struct uv
             INFO("[devID:%d] xavier, bulk mode: uvc stream on\n", dev_index);
 
             //开流
-            DBG("[devID:%d] host start stream\n", dev_index);
+            pthread_mutex_lock(&g_uvc_frame_drop_mutex);
+            INFO("[devID:%d] host start stream begin\n", dev_index);
             if (dev_index == OB_UVC_DEVICE_NODE_NUM_DEPTH)
                 ob_stream_on_op(TYPE_DEPTH);
             else if (dev_index == OB_UVC_DEVICE_NODE_NUM_IR)
@@ -1876,7 +1890,8 @@ static void ob_tof_uvc_events_process_data(struct tof_uvc_device *dev, struct uv
             else
 
                 ERR("dev_index:%d, error\n", dev_index);
-            DBG("[devID:%d] host start stream success!\n", dev_index);
+            INFO("[devID:%d] host start stream success!\n", dev_index);
+            pthread_mutex_unlock(&g_uvc_frame_drop_mutex);
         }
     }
 
@@ -2041,6 +2056,7 @@ static void ob_tof_uvc_video_fill_buffer(struct tof_uvc_device *dev, struct v4l2
 }
 
 
+#if 0
 /*****************************************************************************
 *   Prototype    : ob_tof_uvc_video_process
 *   Description  : orbbec buff video process api
@@ -2080,8 +2096,10 @@ static int ob_tof_uvc_video_process(struct tof_uvc_device *dev)
 
     return 0;
 }
+#endif
 
 
+#if 0
 /*****************************************************************************
 *   Prototype    : ob_tof_uvc_video_send
 *   Description  : send uvc stream api
@@ -2123,6 +2141,7 @@ int ob_tof_uvc_video_send(struct tof_uvc_device *dev, void *data, unsigned int l
 
     return ret;
 }
+#endif
 
 
 /*****************************************************************************
@@ -2182,7 +2201,7 @@ int ob_tof_uvc_video_init(struct tof_uvc_device *dev __attribute__((__unused__))
 }
 
 
-static int32_t ob_stream_on_op(EM_DATA_TYPE data_type)
+int32_t ob_stream_on_op(EM_DATA_TYPE data_type)
 {    
     int dev_index = -1;
 
@@ -2228,7 +2247,7 @@ static int32_t ob_stream_on_op(EM_DATA_TYPE data_type)
 }
 
 
-static int32_t ob_stream_off_op(EM_DATA_TYPE data_type)
+int32_t ob_stream_off_op(EM_DATA_TYPE data_type)
 {
     int dev_index = -1;
 
@@ -2275,6 +2294,7 @@ static int32_t ob_stream_off_op(EM_DATA_TYPE data_type)
 *   Output       : None
 *   Return Value : void
 
+此api废弃
 *****************************************************************************/
 void ob_usb_gadget_cmd_from_host(OB_NODE_GADGET_CMD_EM cmd, void *pData) //cost_time 200ms
 {
@@ -2316,6 +2336,7 @@ int ob_sl_uvc_cmd_cb_register(struct tof_uvc_device *dev)
     static bool s_first_flag = true;
     if (s_first_flag){
         pthread_mutex_init(&g_stream_control_mutex, NULL); 
+        pthread_mutex_init(&g_uvc_frame_drop_mutex, NULL); 
         //ob_gadget_register_cmd_cb(OB_PRIVATE_CHANNEL_DEVICE_NODE_NUM, ob_usb_gadget_cmd_from_host);
         s_first_flag = false;
     }

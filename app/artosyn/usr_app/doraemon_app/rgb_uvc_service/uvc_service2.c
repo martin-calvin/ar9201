@@ -35,12 +35,20 @@
 #include "logutil.h"
 #include "basic_typedef.h"
 #include "orbbec_gadget_types.h"
+#include "obshareDataType.h"
+
 
 
 /* 格式顺序: H265 H264 Mjpeg YUYV */
 struct uvc_format_info *uvc_formats = NULL; //通过 getConfigfsFormat 获取的数据格式支持列表
 int uvc_formats_num = 0;
-int g_rgb_crop_flag = false; //rgb裁剪标志(rw)
+
+//bit0: calibra
+//bit1: d2c(SW)
+//bit2: d2c(HW)
+//由于默认开软件d2c,所以在此默认将bit1赋值
+u16 g_rgb_crop_flag = 0x02; //rgb裁剪标志(rw)
+
 
 extern server_api_ops_t api_ops;
 
@@ -68,6 +76,96 @@ static EM_RES_MODE ob_rgb_get_res_mode(unsigned int w, unsigned int h)
         else
             return RES_MODE_16_9;
     }   
+}
+
+
+/*****************************************************************************
+*   Prototype    : ob_rgb_crop_op
+*   Description  : rgb zoom operation
+*   Input        : uvc_server_t *pServer  
+*                  bool crop_flag         
+*   Output       : None
+*   Return Value : static int
+*****************************************************************************/
+inline static int ob_rgb_crop_op(uvc_server_t *p1Server, bool crop_flag)
+{
+    zoom_pra_t zoom;
+    memset(&zoom, 0, sizeof(zoom));
+    uvc_server_t  *pServer = get_uvc_server();
+
+    if (NULL == pServer){
+        ERR("pServer is NULL.\n");
+        return -1;
+    }
+
+
+    if (crop_flag)  //裁剪
+    {
+        if(RES_MODE_4_3 == ob_rgb_get_res_mode(pServer->dev->width, pServer->dev->height))
+        {
+            zoom.manual=1;
+            zoom.digital_zoom=1;
+            zoom.stream_type=1;        //从辅路拿数据    
+            zoom.roi.x=0.166667;       //x.start 640(0.166667) 
+            zoom.roi.y=0.044445;       //y.start  96 (0.044445 )( 94 0.04351852)    y.start 144   (0.066667)    
+            zoom.roi.width=0.666667;   //w 2560 (0.666667) 
+            zoom.roi.height=0.888889;  //h 1920 (0.8888889)     
+        }
+        else //16:9
+        {
+            zoom.manual=1;
+            zoom.digital_zoom=1;
+
+            //uvc 4k从主路拿数据, 非4k从辅路拿数据
+            if (pServer->dev->width == RGB_SENSOR_WIDTH || pServer->dev->width == RGB_SENSOR_HEIGHT)
+            {
+                //需求: uvc 4k不做裁剪,恢复原图输出
+                zoom.stream_type = 0;        
+                zoom.roi.x = 0;
+                zoom.roi.y = 0;
+                zoom.roi.width = 1;
+                zoom.roi.height = 1;  
+            }
+            else 
+            {
+                zoom.stream_type = 1;  
+                zoom.roi.x=0.033333;   //x.start 128 (0.0333334) 
+                zoom.roi.y=0.022222;       //  y.start 48   (0.022222223)    y.start 96  (0.044445)    
+                zoom.roi.width=0.933333;    //  w 3584 (0.933333333) 
+                zoom.roi.height=0.933333;   //  h 2016 (0.933333333) 
+            }
+        }
+    }
+    else
+    {
+        zoom.manual = 1;   
+        zoom.digital_zoom = 1;
+        
+        //uvc 4k从主路拿数据, 非4k从辅路拿数据
+        if (pServer->dev->width == RGB_SENSOR_WIDTH || pServer->dev->width == RGB_SENSOR_HEIGHT)
+            zoom.stream_type = 0;
+        else 
+            zoom.stream_type = 1; 
+        
+        zoom.roi.x = 0;
+        zoom.roi.y = 0;
+        zoom.roi.width  = 1;
+        zoom.roi.height = 1;  
+    }
+
+    INFO("==> zoom: stream_type:%d, roi ratio(x:%.6f, y:%.6f, w:%.6f, h:%.6f)\n",
+                        zoom.stream_type,
+                        zoom.roi.x, zoom.roi.y,
+                        zoom.roi.width, zoom.roi.height);
+    
+    INFO("==> zoom: stream_type:%d, roi(x:%d, y:%d, w:%d, h:%d)\n",
+                        zoom.stream_type,
+                        (int)(3840*zoom.roi.x), (int)(2160*zoom.roi.y),
+                        (int)(3840*zoom.roi.width), (int)(2160*zoom.roi.height));
+    
+    ar_cam_set_zoom(pServer->dev->camera_fd, zoom);  
+
+    return 0;
 }
 
 
@@ -161,8 +259,8 @@ static struct uvc_device *ob_rgb_uvc_open(const char *devname, int fps)  //just 
 
     memset(dev, 0, sizeof *dev);
     dev->fd = fd;
-    dev->width  = server_l->width[0];
-    dev->height = server_l->height[0];
+    dev->width  = server_l->width[1];
+    dev->height = server_l->height[1];
     dev->frame_interval = (10000000 / fps);
     dev->fcc = uvc_formats[0].fcc;
     dev->fcc_index = 0;
@@ -200,7 +298,7 @@ static void ob_rgb_uvc_close(struct uvc_device *dev)
 *****************************************************************************/
 void *ob_rgb_get_stream_form_rtos(void *para)
 {
-    uvc_server_t                    *server_l               = get_uvc_server();
+    int                             ret = -1;
     struct uvc_frame_buf_info       *buf_info[BUFFER_COUNT] = {0};
     int                             count                   = 500;
     int                             lancher_fd              = -1;
@@ -210,15 +308,13 @@ void *ob_rgb_get_stream_form_rtos(void *para)
     struct timeval                  tv;
     unsigned int                    tmp_index, fcc_index;
     struct uvc_format_opt           *format_opt;
-    int                             ret = -1;
     ar_uvc_context_t                *context = NULL;
     uint32_t                        context_size = 0;
     int                             get_frame_succ = 0;
-	static int fd = -1;
-	zoom_pra_t zoom;	
-	static int zoom_count = 0;
-    static bool D2Cchangeflag = 0;
-	
+    static volatile bool            bRgbCropOpFlag = false; //是否已下发了zoom参数(rw)
+	uvc_server_t                    *server_l               = get_uvc_server();
+
+    
     while(server_l->run_flag)
     {
         switch(server_l->status)
@@ -226,8 +322,8 @@ void *ob_rgb_get_stream_form_rtos(void *para)
             case UVC_STATUS_IDLE:
                 server_l->status = UVC_STATUS_INIT;
                 break;
-            
             case UVC_STATUS_INIT:
+            {
                 //[1] 开启multimedia_core节点
                 do{
                     usleep(10*1000);
@@ -235,8 +331,7 @@ void *ob_rgb_get_stream_form_rtos(void *para)
                     count--;
                 }while(!server_l->handle && count > 0 && server_l->run_flag);
 
-                if(!server_l->handle)
-                {
+                if(!server_l->handle){
                     ERR("can not open multicore try 500 times dur 5s,exit the app, please checkout your frame work !!!!");
                     server_l->status = UVC_STATUS_EXIT;
                     break;
@@ -250,9 +345,8 @@ void *ob_rgb_get_stream_form_rtos(void *para)
                         usleep(10*1000);
                     count--;
                 }while(lancher_fd < 0 && count > 0 && server_l->run_flag);
-
-                if(lancher_fd < 0)
-                {
+                
+                if(lancher_fd < 0){
                     ERR("can not open lancher try 500 times dur 5s,exit the app, please checkout your frame work !!!!");
                     server_l->status = UVC_STATUS_EXIT;
                     break;
@@ -261,42 +355,51 @@ void *ob_rgb_get_stream_form_rtos(void *para)
                 ar_lancher_creat_app(lancher_fd, "jpeg_service");
                 ar_lancher_close(lancher_fd);
 
+
                 //[3] 初始化默认格式pipeline
-                if(NULL == uvc_formats[server_l->dev->fcc_index].data || NULL == uvc_formats[server_l->dev->fcc_index].data->format_opt)
-                {
+                if(NULL == uvc_formats[server_l->dev->fcc_index].data || NULL == uvc_formats[server_l->dev->fcc_index].data->format_opt){
                     ERR("uvc_formats get error!\n");
                     server_l->status = UVC_STATUS_EXIT;
                     break;
                 }
 
-                if(uvc_formats[server_l->dev->fcc_index].data->format_opt->format_init(  //uvc_mjpeg_init, uvc_h264_init
-                                                            uvc_formats[0].data,
-                                                            server_l->handle,
-                                                            server_l->argc,
-                                                            server_l->argv))
+                //uvc_mjpeg_init, uvc_h264_init, uvc_i420_init
+                if(uvc_formats[server_l->dev->fcc_index].data->format_opt->format_init(uvc_formats[0].data,server_l->handle,server_l->argc,server_l->argv)) 
                 {
                     ERR("uvc_formats init error!\n");
                     server_l->status = UVC_STATUS_EXIT;
                     break;
                 }
 
-                INFO("pipe_index=%d\n", server_l->pipe_index);
+                ar_uvc_get_context((void**)&context, &context_size);
+                while (AR_ELEMENT_STATE_PLAYING != ar_element_get_state(server_l->handle,(ar_pipeline_t)context->pipeline.element)){
+                    //INFO("wait first playing state!\n");
+                    usleep(10*1000);
+                }
+
+                //开机后保持流关闭状态,等待上位机请求开流
+                ret = ar_pipeline_terminal_stream(server_l->handle, (ar_pipeline_t)context->pipeline.element); //ANY --> NULL
+                if (0 != ret)                {
+                    ERR("xavier, terminal stream failed!\n");                    
+                    server_l->status = UVC_STATUS_EXIT;
+                    break;                    
+                }
+                INFO("terminal stream, then wait host trigger stream start!\n");
 
                 //[4] 开启pipeline控制节点
+                INFO("pipe_index=%d\n", server_l->pipe_index);
                 sprintf(path, "/dev/uvc_path-%d", server_l->pipe_index);
                 server_l->pipe_line_fd = ar_pipeline_ctrl_open(path);
-                if(server_l->pipe_line_fd < 0)
-                {
+                if(server_l->pipe_line_fd < 0) {
                     ERR("open pipeline error pipe_index=%d\n",server_l->pipe_index);
                     server_l->status = UVC_STATUS_EXIT;
                     break;
                 }
-
-                //[4] 开启camera控制节点
+                
+                //[5] 开启camera控制节点
                 sprintf(path, "/dev/cam_src-%d", server_l->pipe_index);
                 server_l->dev->camera_fd = open(path, O_RDWR | O_SYNC);
-                if(server_l->dev->camera_fd < 0)
-                {
+                if(server_l->dev->camera_fd < 0){
                     ERR("open device %s failed fd=%d\n", path, server_l->dev->camera_fd);
                     server_l->dev->camera_fd = -1;
                     server_l->status = UVC_STATUS_EXIT;
@@ -305,117 +408,72 @@ void *ob_rgb_get_stream_form_rtos(void *para)
 
                 FD_ZERO(&fds);
                 FD_SET(server_l->dev->fd, &fds);
+                
                 server_l->status = UVC_STATUS_INIT_COMPLETE;
                 break;
-
+            }
+            
             case UVC_STATUS_INIT_COMPLETE:
+            {
+                fcc_index   = server_l->dev->fcc_index;
+                format_opt  = uvc_formats[fcc_index].data->format_opt;
+                for(int i = 0; i < BUFFER_COUNT; ++i){
+                    if(NULL != buf_info[i]){
+                        if(format_opt->release_frame(uvc_formats[fcc_index].data, buf_info[i])){ // uvc_mjpeg_release_frame
+                            ERR("release buffer fail!!\n");
+                        }
+                        buf_info[i] = NULL;
+                    }
+                }
+                INFO("wait playing by host!\n");
+                
                 ar_uvc_get_context((void**)&context, &context_size);
-                if(NULL != context && AR_ELEMENT_STATE_PLAYING == ar_element_get_state(server_l->handle,(ar_pipeline_t)context->pipeline.element))
+                while (AR_ELEMENT_STATE_PLAYING != ar_element_get_state(server_l->handle,(ar_pipeline_t)context->pipeline.element))
                 {
-                    ar_cam_get_3a_info(server_l->dev->camera_fd, &info);
-                    server_l->dev->camera_terminal.exposure_time_absolute_val = info.aec_info.exp_time_us * 10000;//server_l->CT_BRIGHTNESS_DEFAULT_VAL;
-                    server_l->dev->camera_terminal.auto_exposure_aec_info     = info.aec_info;
-                    server_l->status = UVC_STATUS_RELEASE_FRAME;
-                    if(V4L2_PIX_FMT_MJPEG == server_l->dev->fcc)
-                        uvc_video_set_rotation(server_l->handle,server_l->rotation_angle);
-                }
-                else
-                {
-                    INFO("init complete and wait playing state!\n");
-                    usleep(1000000);
-                }
-				fd =server_l->dev->camera_fd;	
-				//printf("-----UVC_STATUS_INIT_COMPLETE: camera_fd fd=%d\n",  fd);
-/*	
-				if(RES_MODE_4_3 == ob_rgb_get_res_mode(server_l->dev->width, server_l->dev->height))// 分辨率 4:3，需要裁剪
-				{
-					zoom.manual=1;
-					zoom.digital_zoom=1;
-					zoom.stream_type=0;
-			
-					zoom.roi.x=0.127605;  //y:490  //0.130730： x502  y 24  w 2848  h 2136 
-					zoom.roi.y=0;
-					zoom.roi.width=0.741667;
-					zoom.roi.height=0.988886;	
-					//printf("UVC_STATUS_INIT_COMPLETE: ---fd==%d, stream type=%d zoom=%f man_zoom=%d (x,y w,h)=(%f,%f %f,%f)\n",\
-    					//fd,zoom.stream_type,zoom.digital_zoom,zoom.manual,\
-    					//zoom.roi.x,zoom.roi.y,zoom.roi.width,zoom.roi.height);
-					ar_cam_set_zoom(fd, zoom);
-				}	
-				else  // 16:9
-				{
-					zoom.manual=1;
-					zoom.digital_zoom=1;
-					zoom.stream_type=0;
-			
-					zoom.roi.x=0;  // 00
-					zoom.roi.y=0;
-					zoom.roi.width=1;
-					zoom.roi.height=1;	
-					//printf("UVC_STATUS_INIT_COMPLETE: ---fd==%d, stream type=%d zoom=%f man_zoom=%d (x,y w,h)=(%f,%f %f,%f)\n",\
-    					//fd,zoom.stream_type,zoom.digital_zoom,zoom.manual,\
-    					//zoom.roi.x,zoom.roi.y,zoom.roi.width,zoom.roi.height);
-					ar_cam_set_zoom(fd, zoom);
-				}	
-*/
-	//	printf("UVC_STATUS_INIT_COMPLETE: frame_interval==%d height==%d  width%d \n",server_l->dev->frame_interval,server_l->dev->height,server_l->dev->width);
-	/*
-			 if(RES_MODE_4_3 == ob_rgb_get_res_mode(server_l->dev->width, server_l->dev->height))// 分辨率 4:3，需要裁剪
-				{
-				  zoom.manual=1;
-				  zoom.digital_zoom=1;
-				  zoom.stream_type=0;
-			  
-				  zoom.roi.x=0.166667;       //x.start 640(0.166667) 
-				  zoom.roi.y=0.044445;       //  y.start  96 (0.044445 )( 94 0.04351852)    y.start 144   (0.066667)    
-				  zoom.roi.width=0.666667;    //  w 2560 (0.666667) 
-				  zoom.roi.height=0.888889;  //  h 1920 (0.8888889) 
-			//	  printf("UVC_STATUS_INIT_COMPLETE: ---fd==%d, stream type=%d zoom=%f man_zoom=%d (x,y w,h)=(%f,%f %f,%f)\n",\
-			//		  fd,zoom.stream_type,zoom.digital_zoom,zoom.manual,\
-			//		  zoom.roi.x,zoom.roi.y,zoom.roi.width,zoom.roi.height);
-				  ar_cam_set_zoom(fd, zoom);
-				}  
-				else if(((server_l->dev->frame_interval==166667)||(server_l->dev->frame_interval==166666))&&(server_l->dev->width==1080)||(server_l->dev->height==1080)) // 1080P 60 
-				{				
-				  	zoom.manual=1;
-					zoom.digital_zoom=1;
-					zoom.stream_type=0;
-			
-					zoom.roi.x=0;  // 00
-					zoom.roi.y=0;
-					zoom.roi.width=1;
-					zoom.roi.height=1;	
-				//	printf("UVC_STATUS_INIT_COMPLETE 1080p 60 no zoom: ---fd==%d, stream type=%d zoom=%f man_zoom=%d (x,y w,h)=(%f,%f %f,%f) height=%d\n",\
-    			//		fd,zoom.stream_type,zoom.digital_zoom,zoom.manual,\
-    			//		zoom.roi.x,zoom.roi.y,zoom.roi.width,zoom.roi.height,server_l->dev->height);
-					ar_cam_set_zoom(fd, zoom);
-					
-				} 
-				else  // 其他 16:9
-				{
-					
-				  zoom.manual=1;
-				  zoom.digital_zoom=1;
-				  zoom.stream_type=0;
-			  
-				  zoom.roi.x=0.033333;   //x.start 128 (0.0333334) 
-				  zoom.roi.y=0.022222;       //  y.start 48   (0.022222223)    y.start 96  (0.044445)    
-				  zoom.roi.width=0.933333;    //  w 3584 (0.933333333) 
-				  zoom.roi.height=0.933333;   //  h 2016 (0.933333333) 
-			//	  printf("UVC_STATUS_INIT_COMPLETE: ---fd==%d, stream type=%d zoom=%f man_zoom=%d (x,y w,h)=(%f,%f %f,%f)\n",\
-			//		  fd,zoom.stream_type,zoom.digital_zoom,zoom.manual,\
-			//		  zoom.roi.x,zoom.roi.y,zoom.roi.width,zoom.roi.height);
-				  ar_cam_set_zoom(fd, zoom);
-				} 
-*/				
-                break;				
+                    //INFO("init complete and wait playing state, current state:%d\n", ar_element_get_state(server_l->handle,(ar_pipeline_t)context->pipeline.element));
+                    usleep(5*1000);
 
+                    //等待host触发开流:
+                    if (STREAM_CTL_ON == server_l->g_stream_ctl_flag || UVC_CHG_FMT_CHANGE == server_l->g_chg_fmt_flag)
+                    {
+                        uvc_set_pts_bias(server_l->dev);
+                        int ret = ar_pipeline_start_stream(server_l->handle, (ar_pipeline_t)context->pipeline.element); //NULL --> playing
+                        if (0 != ret){
+                            ERR("xavier, start stream failed!\n");                    
+                        }
+                        server_l->g_stream_ctl_flag = STREAM_CTL_IDLE;
+                    }
+                }
+                
+                if(0 != g_rgb_crop_flag){
+                    ob_rgb_crop_op(server_l, true);
+                }else{
+                    ob_rgb_crop_op(server_l, false);
+                }
+     
+                ar_cam_get_3a_info(server_l->dev->camera_fd, &info);
+                server_l->dev->camera_terminal.exposure_time_absolute_val = info.aec_info.exp_time_us * 10000;//server_l->CT_BRIGHTNESS_DEFAULT_VAL;
+                server_l->dev->camera_terminal.auto_exposure_aec_info     = info.aec_info;
+                
+                server_l->status = UVC_STATUS_RELEASE_FRAME;
+
+                /* 根据酷芯微sdk要求: mjpeg的旋转参数配置在pipeline开启之后配置生效(这是与h264,265有区别的地方) */
+                if ((V4L2_PIX_FMT_MJPEG == server_l->dev->new_fcc) && (V4L2_PIX_FMT_MJPEG == server_l->dev->fcc)) {
+                    INFO("Mjpeg Set rotation!\n");
+                    uvc_video_set_rotation(server_l->handle,server_l->rotation_angle);
+                }
+
+                INFO("UVC_STATUS_INIT_COMPLETE, AR_ELEMENT_STATE_PLAYING!!!\n\n");
+                bRgbCropOpFlag = false;
+                
+                break;				
+            }
+            
             case UVC_STATUS_RELEASE_FRAME:
 
                 tmp_index   = server_l->idx % BUFFER_COUNT;
                 fcc_index   = server_l->dev->fcc_index;
                 format_opt  = uvc_formats[fcc_index].data->format_opt;
-
                 if(NULL != buf_info[tmp_index])
                 {
                     if(format_opt->release_frame(uvc_formats[fcc_index].data, buf_info[tmp_index]))
@@ -424,16 +482,48 @@ void *ob_rgb_get_stream_form_rtos(void *para)
                         server_l->status = UVC_STATUS_EXIT;
                         break;
                     }
-
                     buf_info[tmp_index] = NULL;
                 }
 
-                if(1 == server_l->g_chg_fmt_flag) {
+                //触发停流
+                if (STREAM_CTL_OFF == server_l->g_stream_ctl_flag) //host触发停流
+                { 
+                    //必须先release linux端hold的所有buff,然后再去terminal stream.
+                    fcc_index   = server_l->dev->fcc_index;
+                    format_opt  = uvc_formats[fcc_index].data->format_opt;
+                    for(int i = 0; i < BUFFER_COUNT; ++i){
+                        if(NULL != buf_info[i]){
+                            if(format_opt->release_frame(uvc_formats[fcc_index].data, buf_info[i])){
+                                ERR("release buffer fail!!\n");
+                            }
+                            buf_info[i] = NULL;
+                        }
+                    }
+                    
+                    INFO("terminal stream start.\n");
+                    ret = ar_pipeline_terminal_stream(server_l->handle, (ar_pipeline_t)context->pipeline.element); //ANY --> NULL
+                    if (0 != ret)                {
+                        ERR("xavier, terminal stream failed!\n");                    
+                        server_l->status = UVC_STATUS_EXIT;
+                    }else{
+                        server_l->status = UVC_STATUS_INIT_COMPLETE;
+                    }
+                    INFO("terminal stream end.\n");
+
+                    while (AR_ELEMENT_STATE_NULL != ar_element_get_state(server_l->handle,(ar_pipeline_t)context->pipeline.element)){
+                        INFO("wait NULL state, current state:%d\n", ar_element_get_state(server_l->handle,(ar_pipeline_t)context->pipeline.element));
+                        usleep(100*1000);
+                    }
+                                        
+                    break;
+                }
+
+                //触发分辨率/格式切换
+                if(UVC_CHG_FMT_CHANGE == server_l->g_chg_fmt_flag) {  // <== uvc_events_process_data
                     server_l->status = UVC_STATUS_CHANGE_FORMAT;
                 }else{
                     server_l->status = UVC_STATUS_GET_FRAME;
                 }
-
                 break;
 
             case UVC_STATUS_GET_FRAME:
@@ -455,7 +545,7 @@ void *ob_rgb_get_stream_form_rtos(void *para)
                 {
                     if (server_l->idx == 0 && get_frame_succ == 0)
                     {
-                        log_printf("UVC get frame success\n");
+                        INFO("UVC get frame success!\n");
                         get_frame_succ = 1;
                     }
                     if (buf_info[tmp_index]->len > MAX_BUFFER_SIZE)
@@ -465,191 +555,101 @@ void *ob_rgb_get_stream_form_rtos(void *para)
                     }
                     else
                     {
+                        server_l->dev->pts = buf_info[tmp_index]->pts;
+                        server_l->dev->frame_id = buf_info[tmp_index]->frame_id;
                         ret = uvc_video_send(server_l->dev, (void *)buf_info[tmp_index]->addr, buf_info[tmp_index]->len, buf_info[tmp_index]->pts, fds, tv);
                     }
                 }
 
-                if(ret < 0)
-                {
+                if(ret < 0){
                     //ERR("uvc_video_send failed!\n");
-                }
-                else
-                {
+                }else{
                     server_l->idx++;
                 }
 
-                if(1 == server_l->g_chg_fmt_flag){
-                    server_l->status = UVC_STATUS_CHANGE_FORMAT;
-                }else{
-                    server_l->status = UVC_STATUS_RELEASE_FRAME;
-                }
-
-#if 0 //just for debug test!!
-				if(zoom_count>1200)   // 分辨率 16:9，恢复原始比例
-				{
-					zoom.manual=1;
-					zoom.digital_zoom=1;
-					zoom.stream_type=0;
-
-					zoom.roi.x=0;
-					zoom.roi.y=0;
-					zoom.roi.width=1;
-					zoom.roi.height=1;
-
-					printf("UVC_STATUS_GET_FRAME： ---fd==%d, stream type=%d zoom=%f man_zoom=%d (x,y w,h)=(%f,%f %f,%f)\n",\
-    					fd,zoom.stream_type,zoom.digital_zoom,zoom.manual,\
-    					zoom.roi.x,zoom.roi.y,zoom.roi.width,zoom.roi.height);
-                    
-    			    ar_cam_set_zoom(fd, zoom);
-					zoom_count =0;
-					
-				}
-				else if(zoom_count==900)   // 分辨率 4:3， (x.start:640   y.start: 60  width:2800  height:2100)
-				{
-					zoom.manual=1;
-					zoom.digital_zoom=1;
-					zoom.stream_type=0;
-			
-					zoom.roi.x=0.166667;   //  // x.640   y.60
-					zoom.roi.y=0.027778;
-					zoom.roi.width=0.729166;
-					zoom.roi.height=0.972222;	
-					printf("UVC_STATUS_GET_FRAME： ---fd==%d, stream type=%d zoom=%f man_zoom=%d (x,y w,h)=(%f,%f %f,%f)\n",\
-					fd,zoom.stream_type,zoom.digital_zoom,zoom.manual,\
-					zoom.roi.x,zoom.roi.y,zoom.roi.width,zoom.roi.height);
-					ar_cam_set_zoom(fd, zoom);
-				
-				}	
-				else if(zoom_count==600)   // 分辨率 4:3， (x.start:540   y.start: 60  width:2800  height:2100)
-				{
-					zoom.manual=1;
-					zoom.digital_zoom=1;
-					zoom.stream_type=0;
-			
-					zoom.roi.x=0.140625;  // x.540   y.60  w 2800 h 2100
-					zoom.roi.y=0.027778;
-					zoom.roi.width=0.729166;
-					zoom.roi.height=0.972222;
-
-					printf("UVC_STATUS_GET_FRAME： ---fd==%d, stream type=%d zoom=%f man_zoom=%d (x,y w,h)=(%f,%f %f,%f)\n",\
-					fd,zoom.stream_type,zoom.digital_zoom,zoom.manual,\
-					zoom.roi.x,zoom.roi.y,zoom.roi.width,zoom.roi.height);
-					ar_cam_set_zoom(fd, zoom);
-				
-				}				
-				else if(zoom_count==300)  // 分辨率 4:3， (x.start:502   y.start: 24   width:2846  height:2136)
-				{
-					zoom.manual=1;
-					zoom.digital_zoom=1;
-					zoom.stream_type=0;
-			
-					zoom.roi.x=0.130730;  // x502  y 24  w 2846  h 2136 
-					zoom.roi.y=0.011113;
-					zoom.roi.width=0.741667;
-					zoom.roi.height=0.988886;	
-					printf("UVC_STATUS_GET_FRAME： ---fd==%d, stream type=%d zoom=%f man_zoom=%d (x,y w,h)=(%f,%f %f,%f)\n",\
-					fd,zoom.stream_type,zoom.digital_zoom,zoom.manual,\
-					zoom.roi.x,zoom.roi.y,zoom.roi.width,zoom.roi.height);
-					ar_cam_set_zoom(fd, zoom);
-				
-				}							
-				zoom_count++;	
-#endif				
-        
-                // printf("g_rgb_crop_flag:%d\n", g_rgb_crop_flag);
-                 if(g_rgb_crop_flag==1)  // 做裁剪缩放， 后续还需要增加硬件D2C变量
+                //触发停流
+                if (STREAM_CTL_OFF == server_l->g_stream_ctl_flag)  //上位机触发停流
                 {
-                      if(D2Cchangeflag==0)
-                      {
-                      //sensor 最终需要先配置为4K （这里需要酷芯微给接口）
-                        if(RES_MODE_4_3 == ob_rgb_get_res_mode(server_l->dev->width, server_l->dev->height))// 分辨率 4:3，需要裁剪
-                         {
-                              zoom.manual=1;
-                              zoom.digital_zoom=1;
-                              zoom.stream_type=0;      
-                              zoom.roi.x=0.166667;       //x.start 640(0.166667) 
-                              zoom.roi.y=0.044445;       //  y.start  96 (0.044445 )( 94 0.04351852)    y.start 144   (0.066667)    
-                              zoom.roi.width=0.666667;    //  w 2560 (0.666667) 
-                              zoom.roi.height=0.888889;  //  h 1920 (0.8888889) 
-                              printf("UVC_43: ---fd==%d, stream type=%d zoom=%f man_zoom=%d (x,y w,h)=(%f,%f %f,%f)\n",\
-                                fd,zoom.stream_type,zoom.digital_zoom,zoom.manual,\
-                                zoom.roi.x,zoom.roi.y,zoom.roi.width,zoom.roi.height);        
-                         }
-                         else   //16:9
-                         {
-                              zoom.manual=1;
-                              zoom.digital_zoom=1;
-                              zoom.stream_type=0;
-                            
-                              zoom.roi.x=0.033333;   //x.start 128 (0.0333334) 
-                              zoom.roi.y=0.022222;       //  y.start 48   (0.022222223)    y.start 96  (0.044445)    
-                              zoom.roi.width=0.933333;    //  w 3584 (0.933333333) 
-                              zoom.roi.height=0.933333;   //  h 2016 (0.933333333) 
-                              printf("UVC_16 9: ---fd==%d, stream type=%d zoom=%f man_zoom=%d (x,y w,h)=(%f,%f %f,%f)\n",\
-                                fd,zoom.stream_type,zoom.digital_zoom,zoom.manual,\
-                                zoom.roi.x,zoom.roi.y,zoom.roi.width,zoom.roi.height);   
-                         }
-                         ar_cam_set_zoom(fd, zoom); 
-                         D2Cchangeflag=1;
-                      }      
-                }
-                else  // if(ob_streamControl.depthSoftD2C_enable==0)  //关闭d2c后 不做裁剪缩放
-                {
-                      if(D2Cchangeflag==1)
-                      {
-                            zoom.manual=1;   
-                            zoom.digital_zoom=1;
-                            zoom.stream_type=0;
-                        
-                            zoom.roi.x=0;  // 00
-                            zoom.roi.y=0;
-                            zoom.roi.width=1;
-                            zoom.roi.height=1;  
-                            printf("UVC_close D2C: ---fd==%d, stream type=%d zoom=%f man_zoom=%d (x,y w,h)=(%f,%f %f,%f)\n",\
-                            fd,zoom.stream_type,zoom.digital_zoom,zoom.manual,\
-                                zoom.roi.x,zoom.roi.y,zoom.roi.width,zoom.roi.height);  
-                            ar_cam_set_zoom(fd, zoom);
-                              D2Cchangeflag=0;    
-                      }      
-                }          
-
-                break;
-
-            case UVC_STATUS_CHANGE_FORMAT:
-                INFO("UVC_STATUS_CHANGE_FORMAT\n");
-                if(server_l->dev->new_fcc != server_l->dev->fcc)
-                {
-                    //release frame
+                    //必须先release linux端hold的所有buff,然后再去terminal stream.
                     fcc_index   = server_l->dev->fcc_index;
                     format_opt  = uvc_formats[fcc_index].data->format_opt;
-                    for(int i = 0; i < BUFFER_COUNT; ++i)
-                    {
-                        if(NULL != buf_info[i])
-                        {
-                            if(format_opt->release_frame(uvc_formats[fcc_index].data, buf_info[i]))
-                            {
+                    for(int i = 0; i < BUFFER_COUNT; ++i) {
+                        if(NULL != buf_info[i]){
+                            if(format_opt->release_frame(uvc_formats[fcc_index].data, buf_info[i])){
                                 ERR("release buffer fail!!\n");
                             }
                             buf_info[i] = NULL;
                         }
                     }
-                    INFO("release buffer success!\n");
+                    
+                    INFO("terminal stream start.\n");
+                    ret = ar_pipeline_terminal_stream(server_l->handle, (ar_pipeline_t)context->pipeline.element); //ANY --> NULL
+                    if (0 != ret)                {
+                        ERR("xavier, terminal stream failed!\n");                    
+                        server_l->status = UVC_STATUS_EXIT;
+                    }else{
+                        server_l->status = UVC_STATUS_INIT_COMPLETE;
+                    }
+                    INFO("terminal stream end.\n");
+
+                    while (AR_ELEMENT_STATE_NULL != ar_element_get_state(server_l->handle,(ar_pipeline_t)context->pipeline.element)){
+                        INFO("wait NULL state, current state:%d\n", ar_element_get_state(server_l->handle,(ar_pipeline_t)context->pipeline.element));
+                        usleep(100*1000);
+                    }
+                    
+                    break;
                 }
 
-                D2Cchangeflag = 0;
-                uvc_pipeline_set_format(server_l->dev->width, server_l->dev->height, 10000000/server_l->dev->frame_interval, server_l->dev->new_fcc);
+                //触发分辨率/格式切换
+                if(UVC_CHG_FMT_CHANGE == server_l->g_chg_fmt_flag){
+                    server_l->status = UVC_STATUS_CHANGE_FORMAT;
+                }else{
+                    server_l->status = UVC_STATUS_RELEASE_FRAME;
+                }
 
+                //做裁剪缩放
+                if(g_rgb_crop_flag != 0){
+                    if(!bRgbCropOpFlag){
+                        ob_rgb_crop_op(server_l, true);
+                        bRgbCropOpFlag = true;
+                    }      
+                }else{
+                    if(bRgbCropOpFlag){
+                        ob_rgb_crop_op(server_l, false);
+                        bRgbCropOpFlag = false;    
+                    }      
+                }          
+
+                break;
+
+            case UVC_STATUS_CHANGE_FORMAT:
+
+                fcc_index   = server_l->dev->fcc_index;
+                format_opt  = uvc_formats[fcc_index].data->format_opt;
+                for(int i = 0; i < BUFFER_COUNT; ++i)
+                {
+                    if(NULL != buf_info[i]){
+                        if(format_opt->release_frame(uvc_formats[fcc_index].data, buf_info[i])){ // uvc_mjpeg_release_frame
+                            ERR("release buffer fail!!\n");
+                        }
+                        buf_info[i] = NULL;
+                    }
+                }
+                INFO("release last stream buffer list success!\n");
+                
+                uvc_pipeline_set_format(server_l->dev->width, server_l->dev->height, 10000000/server_l->dev->frame_interval, server_l->dev->new_fcc);
                 uvc_video_set_format(server_l->dev);
 
-                server_l->g_chg_fmt_flag = 0;
-                sem_post(&server_l->g_chg_fmt_sem);//release lock
-
+                server_l->g_chg_fmt_flag = UVC_CHG_FMT_IDLE;
                 server_l->status = UVC_STATUS_INIT_COMPLETE;
+                sem_post(&server_l->g_chg_fmt_sem);//==>  uvc_events_process_data
+                
                 break;
 
             case UVC_STATUS_EXIT:
             case UVC_STATUS_MAX:
             default:
+                ERR("server_l->status:%d\n", server_l->status);
                 goto EXIT; //fix: usb automatic disconnect if unconnected rgb sensor 
                 if(1 == server_l->run_flag)
                     server_l->run_flag = 0;
@@ -657,6 +657,8 @@ void *ob_rgb_get_stream_form_rtos(void *para)
                 break;
         }
     }
+    
+    ERR("Enter Exit branch, flag:%d, status:%d\n", server_l->run_flag, server_l->status);
 
 EXIT:
     while(NULL != buf_info[server_l->idx % BUFFER_COUNT])
@@ -669,7 +671,7 @@ EXIT:
 
         if(format_opt->release_frame(uvc_formats[fcc_index].data, buf_info[server_l->idx % BUFFER_COUNT]))
         {
-            log_err("release buffer fail!! %s line:%d\n", __func__, __LINE__);
+            ERR("release buffer fail!! %s line:%d\n", __func__, __LINE__);
             break;
         }
 
@@ -678,9 +680,9 @@ EXIT:
         server_l->idx++;
     }
 
-    if(1 == server_l->g_chg_fmt_flag)
+    if(UVC_CHG_FMT_CHANGE == server_l->g_chg_fmt_flag)
     {
-        server_l->g_chg_fmt_flag = 0;
+        server_l->g_chg_fmt_flag = UVC_CHG_FMT_IDLE;
         sem_post(&server_l->g_chg_fmt_sem);//release lock
     }
 
@@ -712,7 +714,8 @@ static int ob_rgb_start_uvc_trans(void)
     uvc_server_t *server_l = get_uvc_server();
 
     pthread_mutex_init(&server_l->g_wrt_com_mutex, NULL);
-    sem_init(&server_l->g_chg_fmt_sem, 0, 1);
+    pthread_mutex_init(&server_l->g_uvc_frame_drop_mutex, NULL);
+    sem_init(&server_l->g_chg_fmt_sem, 0, 0);
     pthread_attr_init(&attr);
 
     uvc_formats_num = getConfigfsFormat(&uvc_formats, server_l->dev_index);
@@ -867,11 +870,12 @@ static int ob_rgb_uvc_service(void)
     //初始化参数
     server_l->pipe_index = RGB_PIPELINE_INDEX;
     server_l->dev_index  = OB_UVC_DEVICE_NODE_NUM_RGB; // /dev/video0 for rgb
-    server_l->width[0]   = RGB_SENSOR_WIDTH;
-    server_l->height[0]  = RGB_SENSOR_HEIGHT;
-    server_l->width[1]   = 640;
-    server_l->height[1]  = 480;
-    server_l->multi          = 0;  //多路pipeline时需要设置为1
+    server_l->width[0]   = 3840;  //默认主路分辨率
+    server_l->height[0]  = 2160;
+    server_l->width[1]   = 1280;  //默认辅路分辨率(默认配置客户需求分辨率)
+    server_l->height[1]  = 720;
+    server_l->default_man_res = 0x16; //默认配置3480*2160@30fps的setting
+    server_l->multi          = 0;    //多路pipeline时需要设置为1
     server_l->rotation_angle = 90;
     server_l->force_isp_ddr_mode = 0;
     server_l->err_process = 0;
@@ -898,6 +902,132 @@ static int ob_rgb_uvc_service(void)
 
 
 /*****************************************************************************
+*   Prototype    : ob_host_control_callback
+*   Description  : callback function
+*   Input        : OB_RGB_SERVICE_CMD_EM cmd  
+*                  void *data                 
+*   Output       : None
+*   Return Value : void *
+*****************************************************************************/
+void *ob_host_control_callback(OB_RGB_SERVICE_CMD_EM cmd, void *data)
+{    
+    uvc_server_t *pService = get_uvc_server();
+    if (!pService){
+        ERR("pService is NULL.\n");
+        return NULL;
+    } 
+
+    zoom_pra_t zoom;
+    memset(&zoom, 0, sizeof(zoom));
+
+    switch (cmd)
+    {
+        case OB_SW_D2C_SWITCH:
+        {        
+            break;
+        }
+        
+        case OB_CROP_OPRATION:  //客户需求i420 720p 的裁剪(包含d2c)
+        {
+            ob_ptz_control val = *((ob_ptz_control *)data);
+            INFO("[from host] enable:%d, x:%d, y:%d, w:%d, h:%d, speed:%.2f\n", val.enable, val.x, val.y, val.width, val.height, val.speed);
+
+
+            /* 机器猫16:9 D2C裁剪方案:
+                 从原始分辨率3840x2160开始裁剪: 上裁剪48, 下裁剪96,
+                 左右各裁剪 128，到分辨率3584x2016，再缩放到 1280x720
+             */
+            if (val.enable == 1) //4k算法的裁剪+客户需求裁剪 两个裁剪叠加后出1280*720
+            {
+                u32 x = 128 + ((3584 * val.x) / val.width);
+                u32 y = 48 + ((2016 * val.y) / val.height);
+                u32 width = val.width;
+                u32 height = val.height;
+                INFO("[3840*2160] crop x:%d, y:%d, w:%d, h:%d\n", x, y, width, height);
+
+                if ((x + width > 3840) || (y + height) > 2160){
+                    ERR("coordinates is out of range!\n");
+                    break;
+                } 
+
+
+                zoom.manual = 1;
+                zoom.digital_zoom = 1;
+                zoom.stream_type  = 1; //pipeline辅路
+                zoom.roi.x = (float)x/3840;
+                zoom.roi.y = (float)y/2160;    
+                zoom.roi.width  = (float)width/3840;
+                zoom.roi.height = (float)height/2160;
+                INFO("roi, x:%f, y:%f, w:%f, h:%f\n", zoom.roi.x, zoom.roi.y, zoom.roi.width, zoom.roi.height);
+            }
+            else  //4k仅经过算法的裁剪需求裁剪后, 直接scale出1280*720
+            {
+                zoom.manual = 1;   
+                zoom.digital_zoom = 1;
+                zoom.stream_type  = 1;       //pipeline辅路
+                zoom.roi.x = 0.033333;       //x.start 128 (0.0333334) 
+                zoom.roi.y = 0.022222;       //y.start 48  (0.022222223)    
+                zoom.roi.width  = 0.933333;  //w 3584     (0.933333333) 
+                zoom.roi.height = 0.933333;  //h 2016    (0.933333333) 
+                INFO("scale to 720p!\n");
+            }
+
+            ar_cam_set_zoom(pService->dev->camera_fd, zoom);
+            INFO("xavier, zoom!!!\n\n");         
+            break;
+        }
+
+        case OB_RGB_TIMESTAMP_OFFSET_SET:
+        {
+            int val = *((int *)data);
+
+            pService->g_uvc_time_bias = val;
+            INFO("set rgb timestamp offset:%dms\n", val);
+            break;
+        }
+            
+        case OB_RGB_TIMESTAMP_OFFSET_GET:
+        {
+            int *pVal = (int *)data;
+            *pVal = pService->g_uvc_time_bias;
+            INFO("get rgb timestamp offset:%dms\n", *pVal);
+            break;
+        }
+
+        default:
+        {
+            ERR("cmd is error, cmd:%d\n", cmd);
+            break;
+        }
+    }
+
+    return NULL;
+}
+
+
+/*****************************************************************************
+*   Prototype    : ob_rgb_register_host_cmd_callback
+*   Description  : register callback
+*   Input        : ob_host_control_cb_for_rgb cb  
+*   Output       : None
+*   Return Value : static void
+*****************************************************************************/
+static void ob_rgb_register_host_cmd_callback(ob_host_control_cb_for_rgb cb)
+{
+    uvc_server_t *pService = get_uvc_server();
+    if (!pService){
+        ERR("pService is NULL.\n");
+        return;
+    } 
+
+    if (NULL != cb)
+        pService->cmd_cb = cb;
+    else
+       ERR("cb is NULL.\n");
+}
+
+
+/*****************************************************************************
 *   Prototype    : ob_rgb_uvc_module_init
 *   Description  : rgb uvc模块初始化
 *   Input        : void   
@@ -907,7 +1037,10 @@ static int ob_rgb_uvc_service(void)
 int32_t ob_rgb_uvc_module_init(void)
 {
     pthread_t thread;
+    uvc_server_t *server_l = get_uvc_server();
 	pthread_create(&thread, NULL, (void *)ob_rgb_uvc_service, NULL);
+
+    ob_rgb_register_host_cmd_callback(ob_host_control_callback);
 
     return 0;
 }

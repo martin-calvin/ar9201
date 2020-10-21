@@ -96,12 +96,12 @@ extern "C"
 		OBIntrinsicRefinement refine_; // refinement参数
 	} OBCameraIntrinsic;
 
-typedef struct _Componet_temperature
-{
-	float ldm_temp;
-	float ir_temp;
-	float rgb_temp;
-}Componet_temp;
+	typedef struct _Componet_temperature
+	{
+		float ldm_temp;
+		float ir_temp;
+		float rgb_temp;
+	} Componet_temp;
 	typedef struct _OBRelativePose
 	{
 		float rx_; // x方向旋转分量
@@ -207,6 +207,7 @@ typedef struct _Componet_temperature
 *  高16位为固件版本号， 低16位为硬件版本号
 */
 	int Mx6300_read_fw_version(char *fw);
+	int Mx6300_get_firmware_ver(uint32_t *fw_ver);
 	int Mx6300_read_hw_version(uint8_t *hw_ver);
 	/**
 * char * Mx6300_get_serial_number(); 获取SN号
@@ -262,10 +263,10 @@ typedef struct _Componet_temperature
 	int Mx6300_set_laser_flood_led_current(uint32_t value); //32bit Set LED current (uA)
 	int Mx6300_get_ldp_protect_status(uint8_t *res);		//8bit Get LDP work status(protect or not)
 
-	int Mx6300_set_ldp_enable(uint8_t value); //8bit Set LDP work or not work
-	int Mx6300_get_ldp_enable(uint8_t *res);  //8bit Get LDP work status(work or not)
-    int Mx6300_set_ldp_calibrate(uint8_t ldp_calibrate);//set ldp calibrate
-	int Mx6300_write_ldp_calibrate_data(uint8_t* pdata);
+	int Mx6300_set_ldp_enable(uint8_t value);			 //8bit Set LDP work or not work
+	int Mx6300_get_ldp_enable(uint8_t *res);			 //8bit Get LDP work status(work or not)
+	int Mx6300_set_ldp_calibrate(uint8_t ldp_calibrate); //set ldp calibrate
+	int Mx6300_write_ldp_calibrate_data(uint8_t *pdata);
 
 	int Mx6300_get_ldp_data(uint32_t *res); //32bit Get LDP output data
 
@@ -329,7 +330,7 @@ typedef struct _Componet_temperature
 	int Mx6300_set_rectify_enable(uint8_t value); //32bit
 	int Mx6300_get_rectify_enable(uint8_t *res);  //32bit
 
-    int Mx6300_get_componet_temp(Componet_temp* temp);
+	int Mx6300_get_componet_temp(Componet_temp *temp);
 
 	//##############################################################################
 	// Not support

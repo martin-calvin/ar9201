@@ -141,6 +141,13 @@ typedef struct _D2C_PARAMS
 	float depth_max_value;	  //深度范围最大值
 } D2C_PARAMS;
 
+typedef struct _softfilterParam
+{
+    int32_t maxDiff;
+    int32_t maxSpeckleSize;
+    bool softfilterEnable;
+}softfilterParam;
+
 typedef struct _DepthToColorImpl
 {
 	float depth_K_[4];			// fx fy cx cy;
@@ -149,40 +156,45 @@ typedef struct _DepthToColorImpl
 	float trans_[3];			// trans vector
 	float depth_distort_[5];	// [ k1 k2 p1 p2 k3] Consistent with SDK
 	float color_distort_[5];	// [ k1 k2 p1 p2 k3] Consistent with SDK
-	int *linear_rot_coeff_ht; // len  =  3 * 1280 * 960 * sizeof(float)
-	int trans_coeff_[3];		//
+	float *linear_rot_coeff_ht; // len  =  3 * 1280 * 960 * sizeof(float)
+	float trans_coeff_[3];		//
 	int *color_y_max_lut;		//  len  =  1280 * sizeof(int32_t)
 	int *color_y_min_lut;		//  len  =  1280 * sizeof(int32_t)
 
-	D2C_PARAMS d2c_param_; //     params = { false, false, false, 0.1, false, true, 1, 10000.0 };
-	bool param_loaded_;	   //true;
+	D2C_PARAMS d2c_param_;      // params = { false, false, false, 0.1, false, true, 1, 10000.0 };
+	bool d2c_enable;	        //true;
 
-	float *distortTable_x_;	   //len  = 1 *sizeof(float)
-	float *distortTable_y_;	   //len  = 1 *sizeof(float)
-	int *disto_rot_coeff_ht; // len  =  3 * 1280 * 960 * sizeof(float)
-	D2CDist *d2cDists;		   // len = 720*1280*sizeof(D2CDist)
+	float *distortTable_x_;	    //len  = 1 *sizeof(float)
+	float *distortTable_y_;	    //len  = 1 *sizeof(float)
+	float *disto_rot_coeff_ht;  // len  =  3 * 1280 * 960 * sizeof(float)
+	D2CDist *d2cDists;		    // len = 720*1280*sizeof(D2CDist)
 	int color_width;
 	int color_height;
 	int depth_width;
 	int depth_height;
 	int rows;
-	int out_rows;
+	int out_rows;	
 } DepthToColorImpl;
+
+
+typedef struct _Depth2Color_pixFormat
+{
+    int color_width;
+    int color_height;
+    int depth_width;
+    int depth_height;
+} Depth2Color_pixFormat;
+
+typedef struct ob_tof_inputs
+{
+    ObTofConstInputs constInputs;    // 不变的参数
+    ObTofFrameInputs frameInputs;    // 每帧变化的参数
+    int multiplex;                   // 是否开启帧复用， 1 复用， 0 非复用
+    DepthToColorImpl pImpl;          // D2C 参数
+    softfilterParam softfilterparam; // DSP端depth软件滤波
+} ObTofInputs;
+
 #pragma pack(pop) //恢复对齐状态
-
-typedef struct _Depth2Color_pixFormat {
-	int color_width;
-	int color_height;
-	int depth_width;
-	int depth_height;
-}Depth2Color_pixFormat;
-
-typedef struct ob_tof_inputs {
-	ObTofConstInputs			constInputs;			// 不变的参数
-	ObTofFrameInputs			frameInputs;			// 每帧变化的参数
-	int 				        multiplex;			 	// 是否开启帧复用， 1 复用， 0 非复用
-	DepthToColorImpl            pImpl;                  //D2C 参数
-}ObTofInputs;
 
 typedef struct ob_version {
     uint8_t major;			//主版本号

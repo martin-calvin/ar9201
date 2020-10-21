@@ -25,6 +25,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/statfs.h> 
 #include "utils.h"
 #include "dbg.h"
 #include "logutil.h"
@@ -223,6 +225,36 @@ int ob_util_dumpToFile(const char *buf, int size, char *filename)
 	INFO("save file:%s success.\n", filename);
 
 	return 0;
+}
+
+
+int ob_util_force_create_dir(const char *dirname)
+{
+	int nRet = access(dirname, F_OK);
+	if(0 == nRet)
+	{
+		//printf("dirname:%s is exisits\n", dirname);
+	}
+
+    nRet = mkdir(dirname, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+
+	return 0;
+} 
+
+
+unsigned int ob_util_get_remaining_capacity_MB(const char *dirname)
+{
+	struct statfs diskInfo;
+    memset(&diskInfo, 0, sizeof(diskInfo));
+
+	if (statfs(dirname, &diskInfo) == -1)
+	{
+		ERR("Get %s information failed\n", dirname);
+		return 0;
+	}
+
+	/* 可用空间大小(单位: MB) = (可用块个数 * 每块大小(单位: B => KB))(单位: KB => MB)) */
+	return (unsigned int)((diskInfo.f_bfree * (diskInfo.f_bsize >> 10)) >> 10);
 }
 
 

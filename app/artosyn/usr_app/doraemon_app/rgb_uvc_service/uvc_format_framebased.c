@@ -32,7 +32,12 @@ static int uvc_h264_init(uvc_format_data_t *data, ar_mm_handle_t handle, int arg
 
     while(server_l->run_flag)
     {
-        sprintf(path, __UVC_SINK_PATH__, server_l->pipe_index);
+        if(server_l->preview_pad_output)
+            sprintf(path, __UVC_SINK_PATH__PREVIEW, server_l->pipe_index);
+        else
+            sprintf(path, __UVC_SINK_PATH__VIDEO, server_l->pipe_index);
+        INFO("path is:%s\n", path);
+        
         uvc_h264_vs_handle = ar_video_stream_open(path);
         if (!uvc_h264_vs_handle)
         {
@@ -108,6 +113,7 @@ static struct uvc_frame_buf_info * uvc_h264_get_frame(uvc_format_data_t *data)
     struct uvc_frame_buf_info       *buf_info           = NULL;
     ar_video_stream_buffer_t        *stream_buf_info    = NULL;
     struct framebased_priv_data     *priv_data          = NULL;
+    uvc_server_t                    *server_l           = get_uvc_server();
 
     if(NULL == data || NULL == data->vs_handle || NULL == data->priv)
     {
@@ -128,16 +134,13 @@ static struct uvc_frame_buf_info * uvc_h264_get_frame(uvc_format_data_t *data)
         ++priv_data->i_frame_for_start;
         //printf("request i frame %d\n", priv_data->i_frame_for_start);
 
-        sprintf(codec_path, "/dev/%s", context->avc_enc.object_name);
-
+        sprintf(codec_path, "/dev/%s", (1 == server_l->preview_pad_output) ? context->avc_enc_0.object_name : context->avc_enc_1.object_name);
+        INFO("codec_path is: %s\n", codec_path);
         vcodec_handle = ar_video_codec_open(codec_path);
-
-        ar_video_encoder_request_idr(vcodec_handle);
-
+        ar_video_encoder_request_idr(vcodec_handle); //请求I帧
         ar_video_codec_close(vcodec_handle);
     }
 
-    //TODO: 可优化, 去掉每帧malloc
     buf_info = (struct uvc_frame_buf_info *)malloc(sizeof(struct uvc_frame_buf_info));
     if(NULL == buf_info)
     {
@@ -209,6 +212,7 @@ static struct uvc_frame_buf_info * uvc_h265_get_frame(uvc_format_data_t *data)
     struct uvc_frame_buf_info       *buf_info           = NULL;
     ar_video_stream_buffer_t        *stream_buf_info    = NULL;
     struct framebased_priv_data     *priv_data          = NULL;
+    uvc_server_t                    *server_l           = get_uvc_server();
 
     if(NULL == data || NULL == data->vs_handle || NULL == data->priv)
     {
@@ -229,12 +233,10 @@ static struct uvc_frame_buf_info * uvc_h265_get_frame(uvc_format_data_t *data)
         ++priv_data->i_frame_for_start;
         //printf("request i frame %d\n", priv_data->i_frame_for_start);
 
-        sprintf(codec_path, "/dev/%s", context->hevc_enc.object_name);
-
+        sprintf(codec_path, "/dev/%s", (1 == server_l->preview_pad_output) ? context->hevc_enc_0.object_name : context->hevc_enc_1.object_name);
+        INFO("codec_path is: %s\n", codec_path);
         vcodec_handle = ar_video_codec_open(codec_path);
-
-        ar_video_encoder_request_idr(vcodec_handle);
-
+        ar_video_encoder_request_idr(vcodec_handle); //请求I帧
         ar_video_codec_close(vcodec_handle);
     }
 

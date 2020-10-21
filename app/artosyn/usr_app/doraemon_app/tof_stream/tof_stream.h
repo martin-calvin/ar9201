@@ -32,7 +32,7 @@
 #include <semaphore.h>
 #include "tof_info.h"
 #include "ar_picture_common_api.h"
-
+#include "arm_to_dsp_data.h"
 
 /*==============================================*
  *      constants or macros define              *
@@ -84,14 +84,6 @@ typedef enum _switch_StreamType
     STREAM_TYPE_DEPTH_1280_1024
 } switch_StreamType;
 
-typedef enum _DATA_TYPE
-{
-    TYPE_IR,
-    TYPE_DEPTH
-}EM_DATA_TYPE;
-
-
-
 typedef struct _ob_stream_control
 {
     uint32_t cameraSwitchType; // switch_StreamType
@@ -115,22 +107,17 @@ typedef struct _ob_stream_control
     bool irStopStream;
     bool depthStopStream;
 
-    bool depthSoftFilter_enable;
+    softfilterParam softfilter_Param;
+    Depth2Color_pixFormat d2c_pixFormat;
 
     int depth_MinValue;
     int depth_MaxValue;
 
     bool depthSoftD2C_enable;
+
+    int deviceState;
 } ob_streamcontrol;
 
-typedef struct _softfilterParam
-{
-    int32_t maxDiff;
-    int32_t maxSpeckleSize;
-    int32_t newVal;
-}softfilterParam;
-
-extern softfilterParam softfilter_Param;
 extern ob_streamcontrol ob_streamControl;
 
 /*==============================================*
@@ -172,10 +159,15 @@ typedef struct _ob_tof_camera_handle
     sem_t semDepthConsumeProcessStart;
     pthread_t DepthConsumeThdId;
     
-    //深度流消费端(软件d2c and uvc)
-    bool bDepthUvcRunFlag;        //depth data uvc consume flag (rw)
+    //深度流消费端(DSP)
+    bool bDepthDSPRunFlag;        //depth data uvc consume flag (rw)
+    sem_t semDepthDSPProcessStart;
+    pthread_t DepthDSPThdId;
+
+    //深度流消费端(uvc)
+    bool bDepthUVCRunFlag;        //depth data uvc consume flag (rw)
     sem_t semDepthUVCProcessStart;
-    pthread_t DepthUVCThdId;  
+    pthread_t DepthUVCThdId; 
 
 
     unsigned short sTofStreamManageFlag;  //tof数据流共享模块标志
@@ -190,7 +182,8 @@ typedef struct _ob_tof_camera_handle
     //pthread_mutex_t mutex_group_opt;
     
     CommonQueue<ObTofFrame> *pRawDataQueue; //manage data from rtos
-    CommonQueue<ObTofFrame> *pUVCQueue; //manage data from rtos
+    CommonQueue<ObTofFrame> *pDSPQueue;     //manage data from rtos
+    CommonQueue<ObTofFrame> *pUVCQueue;     //manage data from rtos
 }ob_tof_camera_handle;
 
 

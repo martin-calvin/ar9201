@@ -146,7 +146,7 @@ int getMaxPayloadTransferSize(int index)
     {
         ERR("read failed!\n");
     }
-    DBG("get streaming_maxpacket[index:%d]: %d\n", index, ret);
+    //DBG("get streaming_maxpacket[index:%d]: %d\n", index, ret);
     return ret;
 }
 
@@ -184,7 +184,7 @@ int getMaxPayloadTransferSizeBulk(int index)
         }
     }
 
-    DBG("get streaming_maxpayload[index:%d]: %d\n", index, ret);
+    //DBG("get streaming_maxpayload[index:%d]: %d\n", index, ret);
     return ret;
 }
 
@@ -201,7 +201,7 @@ int getTransferInterval(int index)
     {
         printf("read failed!\n");
     }
-    DBG("get streaming_interval[index:%d]: %d\n", index, ret);
+    //DBG("get streaming_interval[index:%d]: %d\n", index, ret);
     return ret;
 }
 
@@ -218,7 +218,7 @@ int getTransferMaxburst(int index)
     {
         printf("read failed!\n");
     }
-    DBG("get streaming_maxburst[index:%d]: %d\n", index, ret);
+    //DBG("get streaming_maxburst[index:%d]: %d\n", index, ret);
     return ret;
 }
 
@@ -307,6 +307,10 @@ static int getConfigfsResolution(char * path, struct uvc_frame_info ** frame)
 
             ++resolution_num;
         }
+		else
+		{
+			break;
+		}
     }
 
     *frame = (struct uvc_frame_info *)calloc(resolution_num + 1, sizeof(struct uvc_frame_info));//alloc n+1 unit
@@ -444,6 +448,11 @@ static int getConfigfsFrame(struct uvc_format_info * uvc_format, int index)
             ret = getConfigfsResolution(path, &(uvc_format->frames));
             break;
             
+        case V4L2_PIX_FMT_NV21:
+            sprintf(path, PATH_OF_STREAM_FORMAT_NV21, index);
+            ret = getConfigfsResolution(path, &(uvc_format->frames));
+            break;
+
         default:
             break;
     }
@@ -476,6 +485,7 @@ int getConfigfsFormat(struct uvc_format_info ** uvc_formats, int index)
     int format_y16 = 0;
     int format_y8  = 0;
     int format_i420 = 0;
+    int format_nv21 = 0;
     int format_num = 0;
     char path[256] = {""};
 
@@ -558,6 +568,7 @@ int getConfigfsFormat(struct uvc_format_info ** uvc_formats, int index)
     {
         //printf("can not open %s\n", path);
     }
+    
     sprintf(path, PATH_OF_STREAM_FORMAT_I420, index);
     if(NULL != opendir(path))
     {
@@ -568,14 +579,32 @@ int getConfigfsFormat(struct uvc_format_info ** uvc_formats, int index)
         //printf("can not open %s\n", path);
     }
 
-
-    if(format_h265 + format_h264 + format_mjpeg + format_nv12 + format_yuy2 + format_z16 + format_y16 + format_y8 + format_i420 > 0)
+    sprintf(path, PATH_OF_STREAM_FORMAT_NV21, index);
+    if(NULL != opendir(path))
     {
-        int ret0 = -1, ret1 = -1, ret2 = -1, ret3 = -1, ret4 = -1, ret5 = -1, ret6 = -1, ret7 = -1, ret8 = -1;
-        *uvc_formats = (struct uvc_format_info *)calloc((format_h265 + format_h264 + format_mjpeg + format_nv12 + format_yuy2 + format_z16 + format_y16 + format_y8 + format_i420),
+        format_nv21 = 1;
+    }
+    else
+    {
+        //printf("can not open %s\n", path);
+    }
+
+
+    if(format_h265 + format_h264 + format_mjpeg + format_nv12 + format_yuy2 + format_z16 + format_y16 + format_y8 + format_i420 + format_nv21 > 0)
+    {
+        int ret0 = -1, ret1 = -1, ret2 = -1, ret3 = -1, ret4 = -1, ret5 = -1, ret6 = -1, ret7 = -1, ret8 = -1, ret9 = -1;
+        *uvc_formats = (struct uvc_format_info *)calloc((format_h265 + format_h264 + format_mjpeg + format_nv12 + format_yuy2 + format_z16 + format_y16 + format_y8 + format_i420 + format_nv21),
                                                         sizeof(struct uvc_format_info));
         if(NULL != *uvc_formats)
-        {            
+        {   
+            if(1 == format_i420)
+            {
+                (*uvc_formats)[format_num].fcc = V4L2_PIX_FMT_YUV420;
+                (*uvc_formats)[format_num].data = &uvc_i420_data;
+                ret8 = getConfigfsFrame(&((*uvc_formats)[format_num]), index);
+                ++format_num;
+            }
+
             if(1 == format_mjpeg)
             {
                 (*uvc_formats)[format_num].fcc = V4L2_PIX_FMT_MJPEG;
@@ -640,16 +669,17 @@ int getConfigfsFormat(struct uvc_format_info ** uvc_formats, int index)
                 ++format_num;
             }
             
-            if(1 == format_i420)
+
+
+            if(1 == format_nv21)
             {
-                (*uvc_formats)[format_num].fcc = V4L2_PIX_FMT_YUV420;
-                (*uvc_formats)[format_num].data = &uvc_i420_data;
-                ret8 = getConfigfsFrame(&((*uvc_formats)[format_num]), index);
+                (*uvc_formats)[format_num].fcc = V4L2_PIX_FMT_NV21;
+                (*uvc_formats)[format_num].data = &uvc_nv21_data;
+                ret9 = getConfigfsFrame(&((*uvc_formats)[format_num]), index);
                 ++format_num;
             }
 
-
-            if(ret0 < 0 && ret1 < 0 && ret2 < 0 && ret3 < 0 && ret4 < 0 && ret5 < 0 && ret6 < 0 && ret7 < 0 && ret8 < 0)
+            if(ret0 < 0 && ret1 < 0 && ret2 < 0 && ret3 < 0 && ret4 < 0 && ret5 < 0 && ret6 < 0 && ret7 < 0 && ret8 < 0 && ret9 < 0)
             {
                 printf("Frame info get failed!\n");
                 return -1;

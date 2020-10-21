@@ -184,6 +184,8 @@ void upgrade_image(void *p)
     image_info *upgrade_img = &image; // (image_info *)p;
     printf("upgrade_image run in thread ...\n");
 //    int ret = ar_flash_program(upgrade_img->pimage, upgrade_img->total_len, upgrade_status_update);
+
+    artosyn_set_force_upgrade(true);
 	int ret = ar_upgrade(upgrade_img->pimage, upgrade_img->total_len, upgrade_status_update);
     if(ret < 0)
     {

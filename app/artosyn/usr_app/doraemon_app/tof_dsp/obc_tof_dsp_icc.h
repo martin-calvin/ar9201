@@ -9,6 +9,7 @@ extern "C"{
 
 #include <tof_info.h>
 #include "arm_to_dsp_data.h"
+#include "tof_dsp_memory_map.h"
 
 #define ARM_DSP_DBG_INFO        	(0)//打印调试信息
 #define DEPTH_CALC_FROM_PICTURES	(0)//通过图片计算深度
@@ -70,7 +71,7 @@ int ob_dsp_version(ob_version_t* version);
  * @return 0 success !0 failed
  * @note null
  */
-int ob_dsp_init(void);
+int ob_dsp_init(Depth2Color_pixFormat pixFormat, bool d2c_enable, softfilterParam softfilter_Param);
 
 /**
  * @brief  ob_dsp_deinit 注销icc通信并释放所有申请ION内存
@@ -100,10 +101,29 @@ int ob_dsp_sendcmd(ob_dsp_msg_t* msg);
  */
 int ob_depth_calc(void *group, int needAmp, void* amp, int needDepth, void* depth);
 
-int ob_D2C_DSP_process(uint8_t *inputBuf, uint32_t inputBuf_weith, uint32_t inputBuf_height,
-					   uint8_t *outputBuf, uint32_t outputBuf_weith, uint32_t outputBuf_height);
+/**
+ * @brief  DSP data process function
+ * @param  param_ion_mellc_t inputBuf 
+ * @param  uint32_t inputBuf_weith
+ * @param  uint32_t inputBuf_height
+ * @param  param_ion_mellc_t *outputBuf
+ * @param  uint32_t outputBuf_weith
+ * @param  uint32_t outputBuf_height
+ * @return 0 success !0 failed
+ * @note null
+ */
+int ob_dsp_data_process(param_ion_mellc_t *inputBuf, uint32_t inputBuf_weith, uint32_t inputBuf_height,
+                       param_ion_mellc_t *outputBuf, uint32_t outputBuf_weith, uint32_t outputBuf_height);
 
-int ob_dsp_loadParam(Depth2Color_pixFormat pixFormat);
+/**
+ * @brief  dsp load paramters
+ * @param  Depth2Color_pixFormat pixFormat
+ * @param  bool d2c_enable
+ * @param  softfilterParam softfilter_param
+ * @return 0 success !0 failed
+ * @note null
+ */
+int ob_dsp_loadParam(Depth2Color_pixFormat pixFormat, bool d2c_enable, softfilterParam softfilter_param);
 
 #ifdef __cplusplus
 #if __cplusplus

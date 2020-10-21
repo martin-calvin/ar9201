@@ -20,6 +20,13 @@
 #include "pipe_transfer_framework.h"
 #include "ob_config_define.h"
 
+#ifdef __cplusplus
+#if __cplusplus
+extern "C"{
+#endif
+#endif /* __cplusplus */
+
+
 #define USE_CMD_LINE_PARAM      0
 
 #define clamp(val, min, max) ({                 \
@@ -32,8 +39,8 @@
         __val > __max ? __max: __val; })
 
 #define ARRAY_SIZE(a)                           ((sizeof(a) / sizeof(a[0])))
-#define MAX_BUFFER_SIZE                         (4 * 1024 * 1024) //uvc service中所有buff的大小(4MB)
-#define BUFFER_COUNT                            (4) //hold住freeRTOS buff的数量
+#define MAX_BUFFER_SIZE                         (12 * 1024 * 1024) //uvc service中所有buff的大小(12MB)
+#define BUFFER_COUNT                            (6) //hold住freeRTOS buff的数量
 #define CAM_NUM_MAX                             (6) //最大自动检测/dev/videoN的数量
 #define USB_30_VALUE                            (0x0300)
 #define USB_20_VALUE                            (0x0200)
@@ -52,7 +59,8 @@
 #define __DEFAULT_HEVC_BITRATE__                (20 * 1024) //默认h265的码率(20Mbps)
 #define __DEFAULT_H264_BITRATE__                (20 * 1024) //默认h264的码率(20Mbps)
 
-#define __UVC_SINK_PATH__                       "/dev/uvc_sink-%d"  //UVC sink的格式
+#define __UVC_SINK_PATH__PREVIEW                "/dev/uvc_sink_0-%d"  //主路
+#define __UVC_SINK_PATH__VIDEO                  "/dev/uvc_sink_1-%d"  //辅路, 采集流的节点 
 
 #define __MAX_I_FRAME_FOR_H264_START__          (1)  //每次切换h264流后发送的i帧数量
 #define __MAX_I_FRAME_FOR_H265_START__          (1)  //每次切换h265流后发送的i帧数量
@@ -133,10 +141,10 @@
 #define PU_BACKLIGHT_COMPENSATION_DEFAULT_VAL       50
 
 //增益相关设置
-#define PU_GAIN_MIN_VAL                         0
+#define PU_GAIN_MIN_VAL                         1
 #define PU_GAIN_MAX_VAL                         255
-#define PU_GAIN_STEP_SIZE                       1
-#define PU_GAIN_DEFAULT_VAL                     127
+#define PU_GAIN_STEP_SIZE                       2
+#define PU_GAIN_DEFAULT_VAL                     50
 
 //电力线频率相关设置
 #define PU_POWER_LINE_FREQUENCY_MIN_VAL         0
@@ -159,6 +167,18 @@ typedef enum RES_MODE{
     RES_MODE_16_9,   //16:9的分辨率模式(default)
     RES_MODE_4_3,    //4:3的分辨率模式
 }EM_RES_MODE;
+
+
+typedef enum 
+{
+    OB_SW_D2C_SWITCH,
+    OB_CROP_OPRATION,
+    OB_RGB_TIMESTAMP_OFFSET_SET,
+    OB_RGB_TIMESTAMP_OFFSET_GET,
+}OB_RGB_SERVICE_CMD_EM;
+
+typedef void(*ob_host_control_cb_for_rgb)(OB_RGB_SERVICE_CMD_EM cmd, void *data);
+
 
 struct uvc_frame_info
 {
@@ -255,7 +275,7 @@ typedef struct
 struct uvc_device
 {
     int                     fd;        //uvc fd:    "/dev/videoN"
-    int                     camera_fd; //camera fd: "/dev/cam_src-%d"
+    volatile int            camera_fd; //camera fd: "/dev/cam_src-%d"
 
     struct uvc_streaming_control probe;
     struct uvc_streaming_control commit;
@@ -287,6 +307,7 @@ struct uvc_device
     void                    *imgdata;       //uvc发送buff
 
     unsigned int            pts; /*unit: ms*/
+    unsigned int            frame_id;
 };
 
 typedef enum
@@ -302,12 +323,27 @@ typedef enum
 }uvc_status;
 
 
+typedef enum
+{
+    UVC_CHG_FMT_IDLE = 0,
+    UVC_CHG_FMT_CHANGE,
+}chg_fmt_status;
+
+
+typedef enum
+{
+    STREAM_CTL_IDLE = 0,
+    STREAM_CTL_OFF,
+    STREAM_CTL_ON,
+}stream_ctl_status;
+
+
 typedef struct
 {
     pthread_mutex_t        g_wrt_com_mutex;
     sem_t                  g_chg_fmt_sem;
-    volatile int           g_chg_fmt_flag;  //uvc分辨率切换的标志
-    volatile int           g_stream_on;     //uvc stream on的标志
+    volatile int           g_chg_fmt_flag;  //uvc分辨率切换的标志(rw)
+    volatile int           g_stream_on;     //uvc stream on的标志(rw)
     unsigned long long     g_uvc_timestamp; //ms
     int                    g_uvc_time_bias; //ms(时间戳偏差)
     volatile unsigned int  idx;             //buff's index(hold rtos)
@@ -344,12 +380,31 @@ typedef struct
     int                    err_process;     //出错是否需要处理
     int                    hw_sync;         //是否启用hdr
     uvc_status             status;          //uvc状态机
+	int                    preview_pad_output;  //是否主路输出uvc
+
+    volatile int           g_stream_ctl_flag;   //pipeline流控制标志(rw) stream_ctl_status
+	unsigned long long     u32FrameDropCount;   //丢帧计数
+	pthread_mutex_t        g_uvc_frame_drop_mutex;
+    bool                   frame_drop_flag;
+    uint32_t               default_man_res;  //默认isp settting选择 bit4:enable, bit[0--3]: res
+
+    ob_host_control_cb_for_rgb cmd_cb;
 }uvc_server_t;
 
 struct framebased_priv_data
 {
     unsigned int    i_frame_for_start;
 };
+
+typedef struct _ob_rgb_stream_param
+{
+    unsigned int width;
+    unsigned int height;
+    unsigned int fps;
+    unsigned int fcc; //V4L2_PIX_FMT_MJPEG
+    bool is_streaming;
+}ob_rgb_stream_param;
+
 
 extern uvc_format_data_t uvc_h265_data;
 extern uvc_format_data_t uvc_h264_data;
@@ -360,6 +415,7 @@ extern uvc_format_data_t uvc_z16_data;
 extern uvc_format_data_t uvc_y16_data;
 extern uvc_format_data_t uvc_y8_data;
 extern uvc_format_data_t uvc_i420_data;
+extern uvc_format_data_t uvc_nv21_data;
 
 extern struct uvc_format_info *uvc_formats;
 extern int uvc_formats_num;
@@ -376,6 +432,11 @@ uvc_server_t * get_uvc_server();
 *****************************************************************************/
 extern int32_t ob_rgb_uvc_module_init(void);
 
+#ifdef __cplusplus
+#if __cplusplus
+}
+#endif
+#endif /* __cplusplus */
 
 #endif
 

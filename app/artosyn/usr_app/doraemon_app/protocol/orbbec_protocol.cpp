@@ -48,6 +48,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <math.h>
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
@@ -78,6 +79,9 @@
 #include "tof_stream.h"
 #include "d2c_arith.h"
 #include "obc_sl_drv.h"
+#include "obc_tof_dsp_icc.h"
+#include "uvc_service2.h"
+
 
 using namespace std;
 /*==============================================*
@@ -94,7 +98,11 @@ using namespace std;
 /*==============================================*
  *      project-wide global variables           *
  *----------------------------------------------*/
-extern int g_rgb_crop_flag; //rgb裁剪标志(rw)
+
+//bit0: calibra
+//bit1: d2c(SW)
+//bit2: d2c(HW)
+extern u16 g_rgb_crop_flag; //rgb裁剪标志(rw)  
 
 
 /*==============================================*
@@ -138,7 +146,7 @@ static int32_t init_tof_cam_fd()
 *   Output       : None
 *   Return Value : int32_t
 *****************************************************************************/
-static int32_t orbbec_saveFile(const char *filename, const void *p, uint32_t size, uint32_t count)
+static int32_t orbbec_saveFile(const char *filename, const void *p, uint32_t size)
 {
     FILE *fp;
 
@@ -148,21 +156,11 @@ static int32_t orbbec_saveFile(const char *filename, const void *p, uint32_t siz
     }
     else
     {
-        if (count == 0)
+        fp = fopen(filename, "w");
+        if (fp == NULL)
         {
-            if ((fp = fopen(filename, "w")) == NULL)
-            {
-                ERR("Creat file failed\n");
-                return -1;
-            }
-        }
-        else
-        {
-            if ((fp = fopen(filename, "a")) == NULL)
-            {
-                ERR("Creat file failed\n");
-                return -1;
-            }
+            ERR("creat file failed\n");
+            return -1;
         }
     }
     //printf("process_image size: %d\n", size);
@@ -524,7 +522,7 @@ static int32_t protocol_handle_get_depth_soft_filter(const ProtocolMsg *request,
     uint16_t _res = ACK_OB_SUCCESS;
 
     PropertyVal propertyValue;
-    propertyValue.cur = (uint32_t)ob_streamControl.depthSoftFilter_enable;
+    propertyValue.cur = (uint32_t)ob_streamControl.softfilter_Param.softfilterEnable;
 
     ret = protocol_handle_with_data(request, response, (uint8_t*)&propertyValue, sizeof(propertyValue),_res);
     return ret;
@@ -536,7 +534,7 @@ static int32_t protocol_handle_get_zero_plane_distance(const ProtocolMsg *reques
 
     PropertyVal propertyValue;
 
-    FILE *Param_data = fopen("/factory/doraemon/distortion_d2c4x3.bin", "rb");
+    FILE *Param_data = fopen(cfgParameter_960_1280, "rb");
     if (Param_data == NULL)
     {
         propertyValue.cur = 0;
@@ -548,7 +546,7 @@ static int32_t protocol_handle_get_zero_plane_distance(const ProtocolMsg *reques
         memset(doraemon_d2c_param, 0, sizeof(doraemon_d2c_param));
 
         fread(doraemon_d2c_param, sizeof(char), sizeof(Doraemon_Content_t), Param_data);
-        propertyValue.cur = doraemon_d2c_param->disparity2depthparams.fZeroPlaneDistance;
+        propertyValue.cur = doraemon_d2c_param->disparity2depthparams.fZeroPlaneDistance * pow(10, 4); //float Expand 10^4
 
         fclose(Param_data);
         free(doraemon_d2c_param);
@@ -564,7 +562,7 @@ static int32_t protocol_handle_get_zero_plane_pixel_size(const ProtocolMsg *requ
 
     PropertyVal propertyValue;
 
-    FILE *Param_data = fopen("/factory/doraemon/distortion_d2c4x3.bin", "rb");
+    FILE *Param_data = fopen(cfgParameter_960_1280, "rb");
     if (Param_data == NULL)
     {
         propertyValue.cur = 0;
@@ -576,7 +574,7 @@ static int32_t protocol_handle_get_zero_plane_pixel_size(const ProtocolMsg *requ
         memset(doraemon_d2c_param, 0, sizeof(doraemon_d2c_param));
 
         fread(doraemon_d2c_param, sizeof(char), sizeof(Doraemon_Content_t), Param_data);
-        propertyValue.cur = doraemon_d2c_param->disparity2depthparams.fZeroPlanePixelSize;
+        propertyValue.cur = doraemon_d2c_param->disparity2depthparams.fZeroPlanePixelSize * pow(10, 8); //double Expand 10^8
 
         fclose(Param_data);
         free(doraemon_d2c_param);
@@ -789,7 +787,7 @@ static int32_t protocol_handle_get_max_diff(const ProtocolMsg *request, Protocol
     uint16_t _res = ACK_OB_SUCCESS;
 
     PropertyVal propertyValue;
-    propertyValue.cur = softfilter_Param.maxDiff;
+    propertyValue.cur = ob_streamControl.softfilter_Param.maxDiff;
 
     ret = protocol_handle_with_data(request, response, (uint8_t *)&propertyValue, sizeof(propertyValue), _res);
     return ret;
@@ -801,7 +799,7 @@ static int32_t protocol_handle_get_maxspeckle_size(const ProtocolMsg *request, P
     uint16_t _res = ACK_OB_SUCCESS;
 
     PropertyVal propertyValue;
-    propertyValue.cur = softfilter_Param.maxSpeckleSize;
+    propertyValue.cur = ob_streamControl.softfilter_Param.maxSpeckleSize;
 
     ret = protocol_handle_with_data(request, response, (uint8_t *)&propertyValue, sizeof(propertyValue), _res);
     return ret;
@@ -819,12 +817,36 @@ static int32_t protocol_handle_get_depth_align_hardware(const ProtocolMsg *reque
     return ret;
 }
 
+static int32_t protocol_handle_get_rgb_timestamp_offset(const ProtocolMsg *request, ProtocolMsg *response)
+{
+    int32_t ret = 0;
+    uint16_t _res = ACK_OB_SUCCESS;
+    PropertyVal propertyValue;
+    int iGetParam = 0;
+
+    uvc_server_t *pService = get_uvc_server();
+    if (NULL == pService){
+        ERR("pService is NULL.\n");
+        return -1;
+    }
+    if (NULL != pService->cmd_cb)
+        pService->cmd_cb(OB_RGB_TIMESTAMP_OFFSET_GET, (void *)&iGetParam);
+    DBG("get rgb timestamp offset:%dms\n", iGetParam);
+
+    memset(&propertyValue, 0, sizeof(propertyValue));
+    propertyValue.cur = iGetParam;
+
+    ret = protocol_handle_with_data(request, response, (uint8_t*)&propertyValue, sizeof(propertyValue),_res);
+
+    return ret;
+}
+
 static int32_t protocol_handle_get_calib_status(const ProtocolMsg *request, ProtocolMsg *response)
 {
     int32_t ret = 0;
     uint16_t _res = ACK_OB_SUCCESS;
     PropertyVal propertyValue;
-    propertyValue.cur = g_rgb_crop_flag;
+    propertyValue.cur = ob_util_get_bit_16(g_rgb_crop_flag, 0);
     ret = protocol_handle_with_data(request, response, (uint8_t *)&propertyValue, sizeof(propertyValue), _res);
     return ret;
 }
@@ -1029,6 +1051,55 @@ static int32_t protocol_handle_get_tof_shuffle_mode(const ProtocolMsg *request, 
     return ret;
 }
 
+static int32_t protocol_handle_get_adb_switch(const ProtocolMsg *request, ProtocolMsg *response)
+{
+    int32_t ret = 0;
+    uint16_t _res = 0x0000;
+    PropertyVal propertyValue = {1,1,0,0,1};
+
+    char buf[128] = {0};
+    char cmd_get_temp[] = "/usrdata/usr/data/doraemon/adb_control.sh adb_status";
+    strcpy(buf, get_shell(cmd_get_temp)); 
+    
+    INFO("xavier adb status: %s\n", buf);
+
+    if (!strcmp(buf, "adb_status_on"))
+        propertyValue.cur = 1;
+    else if (!strcmp(buf, "adb_status_off"))
+        propertyValue.cur = 0;
+    else
+        ERR("adb_status:%s\n", buf);
+        
+    ret = protocol_handle_with_data(request, response, (uint8_t*)&propertyValue, sizeof(propertyValue),_res);
+
+    return ret;
+}
+
+static int32_t protocol_handle_get_force_upgrade_mode(const ProtocolMsg *request, ProtocolMsg *response)
+{
+    int32_t ret = 0;
+    uint16_t _res = 0x0000;
+    PropertyVal propertyValue = {1,1,0,0,1};
+
+    char buf[128] = {0};
+    char cmd_get_temp[] = "fw_printenv orbbec_force_upgrade_flag";
+    strcpy(buf, get_shell(cmd_get_temp)); 
+    
+    if (!strcmp(buf, "orbbec_force_upgrade_flag=y")){
+        propertyValue.cur = 1;
+        INFO("orbbec_force_upgrade_flag=y\n");
+    }else{
+        propertyValue.cur = 0;
+        INFO("orbbec_force_upgrade_flag=n\n");
+    }
+        
+    ret = protocol_handle_with_data(request, response, (uint8_t*)&propertyValue, sizeof(propertyValue),_res);
+
+    return ret;
+}
+
+
+
 //设置属性接口
 static int32_t protocol_handle_set_tec_enable(const ProtocolMsg *request, ProtocolMsg *response)
 {
@@ -1050,7 +1121,7 @@ static int32_t protocol_handle_set_ldp(const ProtocolMsg *request, ProtocolMsg *
 
     uint32_t value = 0;
     memcpy(&value, &request->buf.data._data[4], 4);
-    printf("ldp enable = %d\n",value);
+    INFO("ldp enable = %d\n",value);
     Mx6300_set_ldp_enable((uint8_t)value);
 
     ret = protocol_handle_response(request, response, _res);
@@ -1183,13 +1254,30 @@ static int32_t protocol_handle_set_temperature_compensation_coefficient_ldmp(con
     return ret;
 }
 
-static int32_t protocol_handle_set_depth_align(const ProtocolMsg *request, ProtocolMsg *response)
+static int32_t protocol_handle_set_depth_align(const ProtocolMsg *request, ProtocolMsg *response) //D2C(SW)
 {
     int32_t ret = 0;
     uint16_t _res = ACK_OB_SUCCESS;
-    uint32_t value = 0;
-    ob_streamControl.depthSoftD2C_enable = *(uint32_t*)&request->buf.data._data[4];
-    g_rgb_crop_flag = ob_streamControl.depthSoftD2C_enable;
+    uint32_t value = *(uint32_t *)&request->buf.data._data[4];
+
+    if (value != ob_streamControl.depthSoftD2C_enable)
+    {
+        if (!(value) && !(ob_streamControl.softfilter_Param.softfilterEnable))
+        {
+            ob_dsp_deinit();
+        }
+        if ((value) && !(ob_streamControl.softfilter_Param.softfilterEnable))
+        {
+            ob_dsp_init(ob_streamControl.d2c_pixFormat,
+                        ob_streamControl.depthSoftD2C_enable, ob_streamControl.softfilter_Param);
+        }
+        ob_streamControl.depthSoftD2C_enable = value;
+    }
+    if (ob_streamControl.depthSoftD2C_enable)
+        ob_util_set_bit_16(&g_rgb_crop_flag, 1);
+    else
+        ob_util_clear_bit_16(&g_rgb_crop_flag, 1);
+
     ret = protocol_handle_response(request, response, _res);
     return ret;
 }
@@ -1292,8 +1380,19 @@ static int32_t protocol_handle_set_depth_soft_filter(const ProtocolMsg *request,
 
     value = *(uint32_t*)&request->buf.data._data[4];
 
-    ob_streamControl.depthSoftFilter_enable = value;
-
+    if (value != ob_streamControl.softfilter_Param.softfilterEnable)
+    {
+        if (!(value) && !(ob_streamControl.depthSoftD2C_enable))
+        {
+            ob_dsp_deinit();
+        }
+        if ((value) && !(ob_streamControl.depthSoftD2C_enable))
+        {
+            ob_dsp_init(ob_streamControl.d2c_pixFormat,
+                        ob_streamControl.depthSoftD2C_enable, ob_streamControl.softfilter_Param);
+        }
+        ob_streamControl.softfilter_Param.softfilterEnable = value;
+    }
     ret = protocol_handle_response(request, response, _res);
     return ret;
 }
@@ -1494,7 +1593,7 @@ static int32_t protocol_handle_set_max_diff(const ProtocolMsg *request, Protocol
     uint32_t value = 0;
     value = *(uint32_t*)&request->buf.data._data[4];
 
-    softfilter_Param.maxSpeckleSize = value;
+    ob_streamControl.softfilter_Param.maxDiff = value;    
 
     ret = protocol_handle_response(request, response, _res);
     return ret;
@@ -1506,7 +1605,7 @@ static int32_t protocol_handle_set_maxspeckle_size(const ProtocolMsg *request, P
     uint32_t value = 0;
     value = *(uint32_t*)&request->buf.data._data[4];
 
-    softfilter_Param.maxSpeckleSize = value;
+    ob_streamControl.softfilter_Param.maxSpeckleSize = value;    
 
     ret = protocol_handle_response(request, response, _res);
     return ret;
@@ -1543,9 +1642,36 @@ static int32_t protocol_handle_set_depth_align_hardware(const ProtocolMsg *reque
     uint32_t value = 0;
     value = *(uint32_t*)&request->buf.data._data[4];
     Mx6300_set_depth_d2c_mode(value);
-    g_rgb_crop_flag = value;  //新需求: 开启d2c则打开rgb裁剪
+
+    if (1 == value)
+        ob_util_set_bit_16(&g_rgb_crop_flag, 2); //新需求: 开启d2c则打开rgb裁剪
+    else
+        ob_util_clear_bit_16(&g_rgb_crop_flag, 2); 
+    
     ret = protocol_handle_response(request, response, _res);
     return ret;
+}
+
+static int32_t protocol_handle_set_rgb_timestamp_offset(const ProtocolMsg *request, ProtocolMsg *response)
+{
+    int32_t ret = 0;
+    uint16_t _res = 0x0;
+    int iSetParam = *(int*)&request->buf.data._data[4];
+    
+    DBG("set timestamp offset:%dms\n", iSetParam);
+
+    uvc_server_t *pService = get_uvc_server();
+    if (NULL == pService){
+        ERR("pService is NULL.\n");
+        return -1;
+    }
+    
+    if (NULL != pService->cmd_cb)
+        pService->cmd_cb(OB_RGB_TIMESTAMP_OFFSET_SET, (void *)&iSetParam);
+
+    ret = protocol_handle_response(request, response, _res);
+
+    return ret;  
 }
 
 static int32_t protocol_handle_set_calib_status(const ProtocolMsg *request, ProtocolMsg *response)
@@ -1554,7 +1680,12 @@ static int32_t protocol_handle_set_calib_status(const ProtocolMsg *request, Prot
     uint16_t _res = ACK_OB_SUCCESS;
     uint32_t value = 0;
     value = *(uint32_t*)&request->buf.data._data[4];
-    g_rgb_crop_flag = value; //新需求: 进入标定模式则打开rgb裁剪
+
+    if (1 == value)
+        ob_util_set_bit_16(&g_rgb_crop_flag, 0); //新需求: 进入标定模式则打开rgb裁剪
+    else
+        ob_util_clear_bit_16(&g_rgb_crop_flag, 0); 
+
     ret = protocol_handle_response(request, response, _res);
     return ret;
 }
@@ -1739,13 +1870,83 @@ static int32_t protocol_handle_set_tof_shuffle_mode(const ProtocolMsg *request, 
     return ret;
 }
 
+static int32_t protocol_handle_set_adb_switch(const ProtocolMsg *request, ProtocolMsg *response)
+{
+    int32_t ret = 0;
+    uint16_t _res = 0x0000;
+    uint32_t value = 0;
+
+    value = *(uint32_t*)&request->buf.data._data[4];
+    INFO("set adb switch::%d\n",value);
+
+    if (value == 1)
+        get_shell("/usrdata/usr/data/doraemon/adb_control.sh adb_on");
+    else
+        get_shell("/usrdata/usr/data/doraemon/adb_control.sh adb_off");    
+
+    ret = protocol_handle_response(request, response, _res);
+
+    return ret;
+}
+
+static int32_t protocol_handle_reboot_device(const ProtocolMsg *request, ProtocolMsg *response)
+{
+    int32_t ret = 0;
+    uint16_t _res = 0x0000;
+    uint32_t value = 0;
+
+    value = *(uint32_t*)&request->buf.data._data[4];
+
+    INFO("begin reboot!!\n");
+    system("/etc/init.d/arcastpro_restart.sh");
+
+    ret = protocol_handle_response(request, response, _res);
+
+    return ret;
+}
+
+static int32_t protocol_handle_factory_reset(const ProtocolMsg *request, ProtocolMsg *response)
+{
+    int32_t ret = 0;
+    uint16_t _res = 0x0000;
+    uint32_t value = 0;
+
+    value = *(uint32_t*)&request->buf.data._data[4];
+
+    INFO("todo factory reset complete!!\n");
+
+    ret = protocol_handle_response(request, response, _res);
+
+    return ret;
+}
+
+static int32_t protocol_handle_set_force_upgrade_mode(const ProtocolMsg *request, ProtocolMsg *response)
+{
+    int32_t ret = 0;
+    uint16_t _res = 0x0000;
+    uint32_t value = 0;
+
+    value = *(uint32_t*)&request->buf.data._data[4];
+    if (value == 1){
+        system("fw_setenv orbbec_force_upgrade_flag y");
+        INFO("fw_setenv orbbec_force_upgrade_flag y\n");
+    }else{
+        system("fw_setenv orbbec_force_upgrade_flag n");
+        INFO("fw_setenv orbbec_force_upgrade_flag n\n");
+    }
+
+    ret = protocol_handle_response(request, response, _res);
+
+    return ret;
+}
+
+
 //获取自定义数据 函数接口
 static int32_t protocol_handle_get_data_versions(const ProtocolMsg *request, ProtocolMsg *response)
 {
     int32_t ret = 0;
     uint16_t _res = ACK_OB_SUCCESS;
-
-    char DeviceConfig_file[] = "/factory/doraemon/config.bin";
+    
     char deviceSN[12] = "123456789";
     DeviceConfig devCfg;
 
@@ -1769,9 +1970,13 @@ static int32_t protocol_handle_get_data_versions(const ProtocolMsg *request, Pro
     Versions version;
     memset(&version, 0, sizeof(Versions));
 
-    version.nMajor = 1;
-    version.nMinor = 1;
-    version.nBuild = 0;
+    uint32_t mx6300_version = 0;
+    Mx6300_get_firmware_ver(&mx6300_version);
+
+    version.nMajor = (uint8_t)((mx6300_version & 0xff0000) >> 16);
+    version.nMinor = (uint8_t)((mx6300_version & 0x00ff00) >> 8);
+    version.nBuild = (uint16_t)(mx6300_version & 0xff);
+
     version.nChip = 0x0601;
     version.nFPGA = 0x0701;
     memcpy(version.nSerialNumber, deviceSN, sizeof(version.nSerialNumber) / sizeof(unsigned char));
@@ -1829,7 +2034,7 @@ static int32_t protocol_handle_get_data_camera_para(const ProtocolMsg *request, 
     {
         case CAMERA_CFG_PARAMETER_960_1280:
         {
-            FILE *Param_data = fopen("/factory/doraemon/distortion_d2c4x3.bin", "rb");
+            FILE *Param_data = fopen(cfgParameter_960_1280, "rb");
             if (Param_data == NULL)
             {
                 memset(&cameraParameter, 0, sizeof(cameraParameter));
@@ -1848,7 +2053,7 @@ static int32_t protocol_handle_get_data_camera_para(const ProtocolMsg *request, 
         break;
         case CAMERA_CFG_PARAMETER_720_1280:
         {   
-            FILE *Param_data = fopen("/factory/doraemon/d2c_16x9.bin", "rb");
+            FILE *Param_data = fopen(cfgParameter_720_1280, "rb");
             if (Param_data == NULL)
             {
                 memset(&cameraParameter, 0, sizeof(cameraParameter));
@@ -1880,7 +2085,7 @@ static int32_t protocol_handle_get_data_baseline_calibration_para(const Protocol
     uint16_t _res = ACK_OB_SUCCESS;
     BaselineCalibrationPara caliparam;
 
-    FILE *Param_data = fopen("/factory/doraemon/distortion_d2c4x3.bin", "rb");
+    FILE *Param_data = fopen(cfgParameter_960_1280, "rb");
     if (Param_data == NULL)
     {
         caliparam.fZ0 = 0;
@@ -1965,16 +2170,18 @@ static int32_t protocol_handle_get_data_device_temperature(const ProtocolMsg *re
 {
     int32_t ret = 0;
     uint16_t _res = ACK_OB_SUCCESS;
+
     DeviceTemperature readParam;
+    char temp_buf[128] = {0};
+    char cmd_get_temp[] = "devmem 0x60632910 32\n"; //get cpu temperature
 
-    readParam.cpuTemp = 30.5;
-    readParam.imuTemp = 31.5;
-    readParam.irTemp = 32.5;
-    readParam.ldmTemp = 33.5;
-    readParam.mainBoardTemp = 34.5;
-    readParam.tecTemp = 35.5;
+    strcpy(temp_buf, get_shell(cmd_get_temp));
+    int32_t cpu_temp = str_to_int(temp_buf);        //string to decimalism
 
-    ret = protocol_handle_with_data(request, response, (uint8_t*)&readParam, sizeof(readParam),_res);
+    memset(&readParam, 0, sizeof(readParam));
+    readParam.cpuTemp = cpu_temp * 0.4825 - 77.7;
+
+    ret = protocol_handle_with_data(request, response, (uint8_t *)&readParam, sizeof(readParam), _res);
 
     return ret;
 }
@@ -2388,6 +2595,31 @@ static int32_t protocol_handle_set_data_device_ae_params(const ProtocolMsg *requ
     return ret;
 }
 
+
+static int32_t protocol_handle_ptz_control(const ProtocolMsg *request, ProtocolMsg *response)
+{
+    int32_t ret = 0;
+    uint16_t _res = 0x0;
+    ob_ptz_control *pSetParam = (ob_ptz_control *)&request->buf.data._data[4];
+    
+    //DBG("enable:%d, x:%d, y:%d, w:%d, h:%d, speed:%.2f\n", 
+      //  pSetParam->enable, pSetParam->x, pSetParam->y, pSetParam->width, pSetParam->height, pSetParam->speed);
+
+    uvc_server_t *pService = get_uvc_server();
+    if (NULL == pService){
+        ERR("pService is NULL.\n");
+        return -1;
+    }
+    
+    if (NULL != pService->cmd_cb)
+        pService->cmd_cb(OB_CROP_OPRATION, pSetParam);
+
+    ret = protocol_handle_response(request, response, _res);
+
+    return ret;
+}
+
+
 static int32_t protocol_handle_set_data_tof_modulation_freq(const ProtocolMsg *request, ProtocolMsg *response)
 {
     int32_t ret = 0;
@@ -2697,10 +2929,9 @@ static int32_t protocol_handle_get_property(const ProtocolMsg *request, Protocol
         case OB_DEVICE_PROPERTY_ID_MAX_DEPTH:
             ret = protocol_handle_get_max_depth(request, response);
             break;
-        //case OB_DEVICE_PROPERTY_ID_DEPTH_SOFT_FILTER:
-          //  ret = protocol_handle_get_depth_soft_filter(request, response);
-            //break;
-
+        case OB_DEVICE_PROPERTY_ID_DEPTH_SOFT_FILTER:
+           ret = protocol_handle_get_depth_soft_filter(request, response);
+            break;
         case OB_DEVICE_PROPERTY_ID_ZERO_PLANE_DISTANCE:
             ret = protocol_handle_get_zero_plane_distance(request, response);
             break;
@@ -2768,7 +2999,11 @@ static int32_t protocol_handle_get_property(const ProtocolMsg *request, Protocol
         case OB_DEVICE_PROPERTY_ID_DEPTH_ALIGN_HARDWARE:
             ret = protocol_handle_get_depth_align_hardware(request, response);
             break;
-
+        
+        case OB_DEVICE_PROPERTY_ID_TIMESTEMP_OFFSET:
+             ret = protocol_handle_get_rgb_timestamp_offset(request, response);
+             break;
+            
         case OB_DEVICE_PROPERTY_ID_ENABLE_CALIBRATION:
             ret = protocol_handle_get_calib_status(request, response);
             break;
@@ -2816,9 +3051,17 @@ static int32_t protocol_handle_get_property(const ProtocolMsg *request, Protocol
         case OB_DEVICE_PROPERTY_ID_TOF_SHUFFLE_MODE:         //tof Phase Shuffle模式
             ret = protocol_handle_get_tof_shuffle_mode(request, response);
             break;
+        
+        case OB_DEVICE_PROPERTY_ID_ADB_FUNCTION_CONTROL:     //get adb开关
+            ret = protocol_handle_get_adb_switch(request, response);
+            break;
+        
+        case OB_DEVICE_PROPERTY_ID_SET_FORCE_UPGRADE:       //get force upgrade mode
+            ret = protocol_handle_get_force_upgrade_mode(request, response);
+            break;
 
         default:
-            ERR("protocol_handle_get_property,propertyID:%d\n", *propertyID);
+            ERR("protocol_handle_get_property,propertyID:%d(0x%x)\n", *propertyID, *propertyID);
             ret = protocol_handle_default(request, response);
             break;
     }
@@ -2929,10 +3172,9 @@ static int32_t protocol_handle_set_property(const ProtocolMsg *request, Protocol
         case OB_DEVICE_PROPERTY_ID_MAX_DEPTH:
             ret = protocol_handle_set_max_depth(request, response);
             break;
-        //case OB_DEVICE_PROPERTY_ID_DEPTH_SOFT_FILTER:
-          //  ret = protocol_handle_set_depth_soft_filter(request, response);
-            //break;
-
+        case OB_DEVICE_PROPERTY_ID_DEPTH_SOFT_FILTER:
+           ret = protocol_handle_set_depth_soft_filter(request, response);
+            break;
         case OB_DEVICE_PROPERTY_ID_ZERO_PLANE_DISTANCE:
             ret = protocol_handle_set_zero_plane_distance(request, response);
             break;
@@ -3009,6 +3251,10 @@ static int32_t protocol_handle_set_property(const ProtocolMsg *request, Protocol
         case OB_DEVICE_PROPERTY_ID_DEPTH_ALIGN_HARDWARE:
             ret = protocol_handle_set_depth_align_hardware(request, response);
             break;
+        
+        case OB_DEVICE_PROPERTY_ID_TIMESTEMP_OFFSET:         //时间戳校正配置
+            ret = protocol_handle_set_rgb_timestamp_offset(request, response);
+            break;
 
         case OB_DEVICE_PROPERTY_ID_ENABLE_CALIBRATION:
             ret = protocol_handle_set_calib_status(request, response);
@@ -3054,8 +3300,24 @@ static int32_t protocol_handle_set_property(const ProtocolMsg *request, Protocol
             ret = protocol_handle_set_tof_shuffle_mode(request, response);
             break;
 
+        case OB_DEVICE_PROPERTY_ID_ADB_FUNCTION_CONTROL:  //set adb switch
+            ret = protocol_handle_set_adb_switch(request, response);
+            break;
+        
+        case OB_DEVICE_PROPERTY_ID_REBOOT_DEVICE:       //重启设备
+            ret = protocol_handle_reboot_device(request, response);
+            break;
+        
+        case OB_DEVICE_PROPERTY_ID_FACTORY_RESET:       //恢复出产设置
+            ret = protocol_handle_factory_reset(request, response);
+            break;
+        
+        case OB_DEVICE_PROPERTY_ID_SET_FORCE_UPGRADE:  //设置设备强制升级模式
+            ret = protocol_handle_set_force_upgrade_mode(request, response);
+            break;
+
         default:
-            ERR("protocol_handle_set_property,propertyID:%d\n", *propertyID);
+            ERR("protocol_handle_set_property,propertyID:%d(0x%x)\n", *propertyID, *propertyID);
             ret = protocol_handle_default(request, response);
             break;
     }
@@ -3075,7 +3337,6 @@ static int32_t protocol_handle_get_Device_SN(const ProtocolMsg *request, Protoco
     int32_t ret = 0;
     uint16_t _res = ACK_OB_SUCCESS;
 
-    char DeviceConfig_file[] = "/factory/doraemon/config.bin";
     char deviceSN[12] = "123456789";
     DeviceConfig devCfg;
 
@@ -3096,6 +3357,27 @@ static int32_t protocol_handle_get_Device_SN(const ProtocolMsg *request, Protoco
     return ret;
 }
 /*****************************************************************************
+*   Prototype    : protocol_handle_get_Device_status
+*   Description  : orbbec protocol get firmware_data
+*   Input        :const ProtocolMsg *request  
+*                  ProtocolMsg *response                                   
+*   Output       : None
+*   Return Value : int32_t
+*****************************************************************************/
+static int32_t protocol_handle_get_Device_status(const ProtocolMsg *request, ProtocolMsg *response)
+{
+    int32_t ret = 0;
+    uint16_t _res = ACK_OB_SUCCESS;
+
+    ob_device_state device_state;
+
+    device_state.type = (ob_device_state_type)ob_streamControl.deviceState;
+
+    ret = protocol_handle_with_data(request, response, (uint8_t *)&device_state, sizeof(device_state), _res);
+
+    return ret;
+}
+/*****************************************************************************
 *   Prototype    : protocol_handle_set_Device_SN
 *   Description  : orbbec protocol get firmware_data
 *   Input        :const ProtocolMsg *request  
@@ -3108,7 +3390,6 @@ static int32_t protocol_handle_set_Device_SN(const ProtocolMsg *request, Protoco
     uint8_t ret = ORBBEC_FAILED;
     uint16_t _res = ACK_OB_SUCCESS;
 
-    char DeviceConfig_file[] = "/factory/doraemon/config.bin";
     char deviceSN[12] = "123456789";
 
     DeviceConfig devCfg;
@@ -3124,7 +3405,7 @@ static int32_t protocol_handle_set_Device_SN(const ProtocolMsg *request, Protoco
     memcpy(deviceSN, &request->buf.data._data[4], sizeof(deviceSN));
     memcpy(&devCfg.sn, &deviceSN, sizeof(deviceSN));
 
-    orbbec_saveFile(DeviceConfig_file, &devCfg, sizeof(devCfg), 0);
+    orbbec_saveFile(DeviceConfig_file, &devCfg, sizeof(devCfg));
 
     obc_sl_write_flash(DEVICE_CONFIG_ADDR, &devCfg, sizeof(devCfg));
     obc_sl_read_flash(DEVICE_CONFIG_ADDR, &devCfg_tmp, sizeof(devCfg));
@@ -3274,6 +3555,9 @@ static int32_t protocol_handle_get_firmware_data(const ProtocolMsg *request, Pro
         case OB_DATA_TYPE_DEVICE_SERIAL_NUMBER:
            ret = protocol_handle_get_Device_SN(request, response);
            break;
+        case OB_DATA_TYPE_DEVICE_STATE:
+           ret = protocol_handle_get_Device_status(request, response);
+           break;
 
         default:
             ERR("protocol_handle_get_firmware_data,propertyID:%d\n", *propertyID);
@@ -3337,6 +3621,10 @@ static int32_t protocol_handle_set_firmware_data(const ProtocolMsg *request, Pro
 
         case OB_DATA_TYPE_DEVICE_AE_PARAMS:          // AE调试参数
             ret = protocol_handle_set_data_device_ae_params(request, response);
+            break;
+
+        case OB_DATA_TYPE_PTZ_CONTROL:               //云台控制
+            ret = protocol_handle_ptz_control(request, response);
             break;
 
         case OB_DATA_TYPE_TOF_MODULATION_FREQ:       // tof 调制频率
@@ -3410,11 +3698,6 @@ static int32_t protocol_handle_set_firmware_data(const ProtocolMsg *request, Pro
 *****************************************************************************/
 static int32_t protocol_handle_upload_file(const ProtocolMsg *request, ProtocolMsg *response)
 {
-    char firmwareFile[] = "./firmware.bin";
-    char referencePictureFile[] = "/factory/doraemon/reference.bin";
-    char cfgParameter_960_1280[] = "/factory/doraemon/distortion_d2c4x3.bin";
-    char cfgParameter_720_1280[] = "/factory/doraemon/d2c_16x9.bin";
-
     uint16_t propertyID = request->buf.data._data[0] + (request->buf.data._data[1] << 8);
     uint16_t currentLength = request->header.nSize * 2 - 6;
 
@@ -3465,19 +3748,15 @@ static int32_t protocol_handle_upload_file(const ProtocolMsg *request, ProtocolM
     switch (propertyID)
     {
         case MX6300_FIRMWARE:
-            ret = orbbec_saveFile(firmwareFile, fileBufffer, currentLength, fileCount);
             memcpy(flashBuf + sizeof(fileLength) + fileOffset, fileBufffer, currentLength);
             break;
         case MX6300_REFERENCE_PICTURE:
-            ret = orbbec_saveFile(referencePictureFile, fileBufffer, currentLength, fileCount);
             memcpy(flashBuf + sizeof(fileLength) + fileOffset, fileBufffer, currentLength);
             break;
         case MX6300_CAMERA_CFG_PARAMETER_960_1280:
-            ret = orbbec_saveFile(cfgParameter_960_1280 + fileCount, fileBufffer, currentLength, fileCount);
             memcpy(flashBuf + sizeof(fileLength) + fileOffset, fileBufffer, currentLength);
             break;
         case MX6300_CAMERA_CFG_PARAMETER_720_1280:
-            ret = orbbec_saveFile(cfgParameter_720_1280, fileBufffer, currentLength, fileCount);
             memcpy(flashBuf + sizeof(fileLength) + fileOffset, fileBufffer, currentLength);
             break;
         default:
@@ -3492,8 +3771,12 @@ static int32_t protocol_handle_upload_file(const ProtocolMsg *request, ProtocolM
         fileCount = 0;
         switch (propertyID)
         {
-            case MX6300_REFERENCE_PICTURE:                
-                obc_sl_write_flash(REFERENCE_ADDR, flashBuf, fileLength + sizeof(fileLength));        
+            case MX6300_FIRMWARE:
+                orbbec_saveFile(firmwareFile, flashBuf + sizeof(fileLength), fileLength);
+                break;
+            case MX6300_REFERENCE_PICTURE:
+                orbbec_saveFile(referencePictureFile, flashBuf + sizeof(fileLength), fileLength);
+                obc_sl_write_flash(REFERENCE_ADDR, flashBuf, fileLength + sizeof(fileLength));
                 obc_sl_read_flash(REFERENCE_ADDR, flashBuf_temp, fileLength + sizeof(fileLength));
                 if (memcmp(flashBuf, flashBuf_temp, fileLength + sizeof(fileLength)) != 0)
                 {
@@ -3511,6 +3794,7 @@ static int32_t protocol_handle_upload_file(const ProtocolMsg *request, ProtocolM
                 }
                 break;
             case MX6300_CAMERA_CFG_PARAMETER_960_1280:
+                orbbec_saveFile(cfgParameter_960_1280, flashBuf + sizeof(fileLength), fileLength);
                 obc_sl_write_flash(DISTORTION_PARAMS_ADDR, flashBuf, fileLength + sizeof(fileLength));
                 obc_sl_read_flash(DISTORTION_PARAMS_ADDR, flashBuf_temp, fileLength + sizeof(fileLength));
                 if (memcmp(flashBuf, flashBuf_temp, fileLength + sizeof(fileLength)) != 0)
@@ -3529,6 +3813,7 @@ static int32_t protocol_handle_upload_file(const ProtocolMsg *request, ProtocolM
                 }
                 break;
             case MX6300_CAMERA_CFG_PARAMETER_720_1280:
+                orbbec_saveFile(cfgParameter_720_1280, flashBuf + sizeof(fileLength), fileLength);
                 obc_sl_write_flash(SOFT_D2C_PARAMS_ADDR, flashBuf, fileLength + sizeof(fileLength));            
                 obc_sl_read_flash(SOFT_D2C_PARAMS_ADDR, flashBuf_temp, fileLength + sizeof(fileLength));
                 if (memcmp(flashBuf, flashBuf_temp, fileLength + sizeof(fileLength)) != 0)
@@ -3605,7 +3890,7 @@ static int ob_readFile(const char *filename, uint8_t *fileBuf, uint32_t &fileBuf
             file_content_len += count;
         }
 
-        INFO("file size %zd\n", file_content_len);
+        //INFO("file size %zd\n", file_content_len);
 
         if (file_content_len > len)
         {
@@ -3630,11 +3915,6 @@ static int ob_readFile(const char *filename, uint8_t *fileBuf, uint32_t &fileBuf
 *****************************************************************************/
 static int32_t protocol_handle_download_file(const ProtocolMsg *request, ProtocolMsg *response)
 {
-    char firmwareFile[] = "./firmware.bin";
-    char referencePictureFile[] = "/factory/doraemon/reference.bin";
-    char cfgParameter_960_1280[] = "/factory/doraemon/distortion_d2c4x3.bin";
-    char cfgParameter_720_1280[] = "/factory/doraemon/d2c_16x9.bin";
-
     int32_t ret = 0;
     int32_t _res = -1;
     static int32_t count = 0;
@@ -3653,6 +3933,8 @@ static int32_t protocol_handle_download_file(const ProtocolMsg *request, Protoco
     }
     memset(file_content, 0, 5 * 1024 * 1024);
     // uint8_t _file_length[4];
+
+    static uint32_t fileOffset = 0;
 
     switch (propertyID)
     {
@@ -3679,10 +3961,14 @@ static int32_t protocol_handle_download_file(const ProtocolMsg *request, Protoco
     }
     else
     {
-        ret = protocol_handle_with_data(request, response, file_content + ((count - 1) * requestLength), requestLength, _res);
-        count++;
-        if (requestLength < 256)
+        // INFO("------fileOffset:%x\n", fileOffset);
+        ret = protocol_handle_with_data(request, response, file_content + fileOffset, requestLength, _res);
+        fileOffset += requestLength;
+        if (fileOffset == file_length)
+        {
             count = 0;
+            fileOffset = 0;
+        }
     }
     free(file_content);
     return ret;

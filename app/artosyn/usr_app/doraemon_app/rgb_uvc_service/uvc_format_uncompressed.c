@@ -17,7 +17,14 @@ struct yuv_priv_data
     unsigned char * yuv_buffer[BUFFER_COUNT];  //存储转换后的buff,如: isp出来的i420经过各种转换成目的格式的buff
 };
 
+
+static int uvc_i420_init(uvc_format_data_t *data, ar_mm_handle_t handle, int argc, char *argv[]);
+static int uvc_i420_deinit(uvc_format_data_t *data, ar_mm_handle_t handle);
+static struct uvc_frame_buf_info * uvc_i420_get_frame(uvc_format_data_t *data);
+static int uvc_i420_release_frame(uvc_format_data_t *data, struct uvc_frame_buf_info * buf_info);
+
 static int uvc_yuy2_deinit(uvc_format_data_t *data, ar_mm_handle_t handle);
+
 
 static int uvc_yuy2_init(uvc_format_data_t *data, ar_mm_handle_t handle, int argc, char *argv[])
 {
@@ -38,7 +45,11 @@ static int uvc_yuy2_init(uvc_format_data_t *data, ar_mm_handle_t handle, int arg
 
     while(server_l->run_flag)
     {
-        sprintf(path, __UVC_SINK_PATH__, server_l->pipe_index);
+        if(server_l->preview_pad_output)
+            sprintf(path, __UVC_SINK_PATH__PREVIEW, server_l->pipe_index);
+        else
+            sprintf(path, __UVC_SINK_PATH__VIDEO, server_l->pipe_index);
+        
         uvc_yuy2_vs_handle = ar_picture_open(path);
         if (!uvc_yuy2_vs_handle)
         {
@@ -182,7 +193,6 @@ static struct uvc_frame_buf_info * uvc_yuy2_get_frame(uvc_format_data_t *data)
         return NULL;
     }
 
-    //todo: 去掉每帧malloc
     buf_info = (struct uvc_frame_buf_info *)malloc(sizeof(struct uvc_frame_buf_info));
     if(NULL == buf_info)
     {
@@ -400,6 +410,93 @@ uvc_format_data_t uvc_y8_data =
 };
 
 
+static int uvc_i420_init(uvc_format_data_t *data, ar_mm_handle_t handle, int argc, char *argv[])
+{
+    ar_picture_handle   uvc_i420_vs_handle = NULL;
+    char                path[128]       = {""};
+    uvc_server_t       *server_l        = get_uvc_server();
+    int                 time_out        = 0;
+    int                 ret;
+
+    if(NULL == data || NULL != data->vs_handle)
+    {
+        ERR("param check error!\n");
+        return -1;
+    }
+
+    ar_uvc_init(server_l->handle, argc, argv);
+
+    while(server_l->run_flag)
+    {
+        if(server_l->preview_pad_output)
+            sprintf(path, __UVC_SINK_PATH__PREVIEW, server_l->pipe_index); //主路 4k拿流
+        else
+            sprintf(path, __UVC_SINK_PATH__VIDEO, server_l->pipe_index);  //辅路 非4k拿流
+
+        char *p = (char *)&server_l->dev->fcc; 
+        INFO("path:%s, format:%c%c%c%c\n", path,  p[0], p[1], p[2], p[3]);
+
+        uvc_i420_vs_handle = ar_picture_open(path);
+        if (!uvc_i420_vs_handle)
+        {
+            ERR("pid %d open %s failed!\n", getpid(), path);
+            usleep(10 * 1000);
+            time_out++;
+            if(time_out > 500)
+            {
+                ERR("pid %d open %s failed! 5s exit the uvc\n", getpid(), path);
+                goto I420_INIT_FAILED;
+            }
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    data->vs_handle = uvc_i420_vs_handle;
+
+    //memset(priv_data, 0, sizeof(struct yuv_priv_data));
+    ret = ar_picture_set_min_align_size(data->vs_handle, MAX_BUFFER_SIZE);
+
+    if(ret != 0)
+    {
+        ERR("pid %d set ar_picture min align failed!\n", getpid());
+        goto I420_INIT_FAILED;
+    }
+
+    //log_always("pid %d set ar_picture min align %d success %d!\n", getpid(), MAX_BUFFER_SIZE, ret);
+
+    return 0;
+
+I420_INIT_FAILED:
+    uvc_i420_deinit(data, handle);
+
+    return -1;
+}
+
+
+static int uvc_i420_deinit(uvc_format_data_t *data, ar_mm_handle_t handle)
+{
+    ar_picture_handle   uvc_i420_vs_handle = NULL;
+    uvc_server_t       *server_l        = get_uvc_server();
+
+    if(NULL == data || NULL == data->vs_handle)
+    {
+        ERR("param check error!\n");
+        return -1;
+    }
+
+    uvc_i420_vs_handle = (ar_picture_handle)data->vs_handle;
+    ar_picture_close(uvc_i420_vs_handle);
+    data->vs_handle = NULL;
+
+    ar_uvc_deinit(server_l->handle);
+
+    return 0;
+}
+
+#if 0
 static struct uvc_frame_buf_info * uvc_i420_get_frame(uvc_format_data_t *data)
 {
     struct uvc_frame_buf_info       *buf_info = NULL;
@@ -489,14 +586,77 @@ FAILED:
 
     return NULL;
 }
+#endif
+
+
+static struct uvc_frame_buf_info * uvc_i420_get_frame(uvc_format_data_t *data)
+{
+    struct uvc_frame_buf_info       *buf_info = NULL;
+    ar_picture_buffer_t             *stream_buf_info = NULL;
+    ar_video_format_info_t          format_info;
+
+    if(NULL == data || NULL == data->vs_handle)
+    {
+        ERR("uvc_format_data is NULL or error!\n");
+        return NULL;
+    }
+
+    buf_info = (struct uvc_frame_buf_info *)malloc(sizeof(struct uvc_frame_buf_info));
+    if(NULL == buf_info)
+    {
+        ERR("malloc buf_info failed!\n");
+        return NULL;
+    }
+
+    memset(buf_info, 0, sizeof(struct uvc_frame_buf_info));
+    memset(&format_info, 0 , sizeof(ar_video_format_info_t));
+
+    stream_buf_info = ar_picture_get_img(data->vs_handle);
+    if(NULL == stream_buf_info)
+    {
+        ERR("ar_picture_get_img failed!\n");
+        goto FAILED;
+    }
+
+    buf_info->addr = (unsigned int)stream_buf_info->mem[0].addr;
+    buf_info->len = stream_buf_info->mem[0].len+stream_buf_info->mem[1].len+stream_buf_info->mem[2].len;//format_info.width * 2 * format_info.height;
+    buf_info->ptr = stream_buf_info;
+    buf_info->pts = stream_buf_info->pts;
+
+    return buf_info;
+
+FAILED:
+    free(buf_info);
+
+    return NULL;
+}
+
+
+static int uvc_i420_release_frame(uvc_format_data_t *data, struct uvc_frame_buf_info * buf_info)
+{
+    //log_always("enter uvc_i420_release_frame \n");
+     if(NULL == data || NULL == data->vs_handle || NULL == buf_info || NULL == buf_info->ptr)
+    {
+        ERR("param check failed!\n");
+        return -1;
+    }
+
+    if(ar_picture_release_img(data->vs_handle, (ar_picture_buffer_t *)buf_info->ptr))
+    {
+        ERR("YUV buffer release error!\n");
+    }
+
+    free(buf_info);
+    return 0;
+}
 
 
 static struct uvc_format_opt uvc_i420_opt =
 {
-    .format_init = uvc_yuy2_init,
-    .format_deinit = uvc_yuy2_deinit,
+    .format_init = uvc_i420_init,
+    .format_deinit = uvc_i420_deinit,
     .get_frame = uvc_i420_get_frame,
-    .release_frame = uvc_yuy2_release_frame,
+    .release_frame = uvc_i420_release_frame,
 };
 
 uvc_format_data_t uvc_i420_data =
@@ -504,5 +664,96 @@ uvc_format_data_t uvc_i420_data =
     .vs_handle = NULL,
     .format_opt = &uvc_i420_opt,
 };
+
+
+static struct uvc_frame_buf_info * uvc_nv21_get_frame(uvc_format_data_t *data)
+{
+    struct uvc_frame_buf_info       *buf_info = NULL;
+    ar_picture_buffer_t             *stream_buf_info = NULL;
+    ar_video_format_info_t          format_info;
+    struct yuv_priv_data            *priv_data = NULL;
+
+    if(NULL == data || NULL == data->vs_handle || NULL == data->priv)
+    {
+        ERR("uvc_format_data is NULL or error!\n");
+        return NULL;
+    }
+
+    buf_info = (struct uvc_frame_buf_info *)malloc(sizeof(struct uvc_frame_buf_info));
+    if(NULL == buf_info)
+    {
+        ERR("malloc buf_info failed!\n");
+        return NULL;
+    }
+
+    memset(buf_info, 0, sizeof(struct uvc_frame_buf_info));
+    memset(&format_info, 0 , sizeof(ar_video_format_info_t));
+
+    stream_buf_info = ar_picture_get_img(data->vs_handle); //数据格式: YUV420P
+    if(NULL == stream_buf_info)
+    {
+        ERR("ar_picture_get_img failed!\n");
+        goto FAILED;
+    }
+
+    priv_data = (struct yuv_priv_data *)data->priv;
+    if(-1 == (buf_info->index = get_free_buffer(priv_data)))
+    {
+        ERR("No free yuv buffer!\n");
+        if(ar_picture_release_img(data->vs_handle, stream_buf_info))
+        {
+            ERR("0 YUV buffer release error!\n");
+        }
+        goto FAILED;
+    }
+
+    ar_picture_get_format(data->vs_handle, &format_info);
+    if(0 == format_info.height || 0 == format_info.width)
+    {
+        ERR("YUV format error!\n");
+        goto FAILED;
+    }
+
+    I420ToNV21((const uint8_t *)(stream_buf_info->mem[0].addr), get_y_stride(format_info.width),
+               (const uint8_t *)(stream_buf_info->mem[1].addr), get_u_v_stride(format_info.width / 2),
+               (const uint8_t *)(stream_buf_info->mem[2].addr), get_u_v_stride(format_info.width / 2),
+               priv_data->yuv_buffer[buf_info->index], format_info.width,
+               priv_data->yuv_buffer[buf_info->index] + format_info.width * format_info.height, format_info.width,
+               format_info.width, format_info.height);
+               
+    buf_info->addr = (unsigned int)priv_data->yuv_buffer[buf_info->index];
+    buf_info->len = format_info.width * 3 / 2 * format_info.height;
+    buf_info->pts  = stream_buf_info->pts;
+    buf_info->frame_id = stream_buf_info->frame_id;
+
+    if(ar_picture_release_img(data->vs_handle, stream_buf_info))
+    {
+        ERR("YUV buffer release error!\n");
+    }
+
+    return buf_info;
+
+FAILED:
+    free(buf_info);
+
+    return NULL;
+}
+
+
+static struct uvc_format_opt uvc_nv21_opt =
+{
+    .format_init = uvc_yuy2_init,
+    .format_deinit = uvc_yuy2_deinit,
+    .get_frame = uvc_nv21_get_frame,
+    .release_frame = uvc_yuy2_release_frame,
+};
+
+uvc_format_data_t uvc_nv21_data =
+{
+    .vs_handle = NULL,
+    .format_opt = &uvc_nv21_opt,
+};
+
+
 
 

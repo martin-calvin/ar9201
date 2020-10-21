@@ -81,9 +81,14 @@ typedef struct
 
 #endif
 
+extern char firmwareFile[];
+extern char referencePictureFile[];
+extern char cfgParameter_960_1280[];
+extern char cfgParameter_720_1280[];
+extern char DeviceConfig_file[];
 
-int initD2C_param(soft_d2c *input, int *linear_rot_coeff_ht_, int *trans_coeff_,
-                  int *color_y_max_lut_, int *color_y_min_lut_, int *rows, int *out_rows);
+int initD2C_param(soft_d2c *input, bool color_distort_switch, float *rot_coeff_ht_, float *trans_coeff_,
+                   int *color_y_max_lut_, int *color_y_min_lut_, int *rows, int *out_rows);
 
 
 

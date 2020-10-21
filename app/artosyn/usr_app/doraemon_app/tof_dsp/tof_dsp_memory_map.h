@@ -27,7 +27,7 @@ typedef struct
 }param_ion_mellc_t;
 
 #define AR_DSP_HEAP_ID      27
-#define USE_ION_MEM_NUM     20
+#define USE_ION_MEM_NUM     30
 
 struct mem_list_t
 {
@@ -58,7 +58,17 @@ typedef enum
 
 	D2C_linear_rot_coeff_ht,
 	D2C_linear_color_y_max_lut,
-	D2C_linear_color_y_min_lut
+	D2C_linear_color_y_min_lut,
+
+	D2C_input_buf_0,
+	D2C_input_buf_1,
+	D2C_input_buf_2,
+	D2C_input_buf_3,
+
+	DSP_input_buf_0,
+	DSP_input_buf_1,
+	DSP_input_buf_2,
+	DSP_input_buf_3,
 }tof_mem_info_t;
 
 #pragma once
@@ -179,13 +189,14 @@ do{ \
     初始化 ObTofDspParams
     初始化 icc_msg
 */
-int init_tof_buffer();
+int init_tof_buffer(Depth2Color_pixFormat pixFormat, bool d2c_enable, softfilterParam softfilter_Param);
 int release_tof_buffer(void);
 
 int all_ion_cache_flush(uint8_t usr_ion_mem_num);
 int all_ion_cache_invalid(uint8_t usr_ion_mem_num);
 
-int dsp_D2Cparams_init(ObTofDspParams *ObfDspParams, Depth2Color_pixFormat pixFormat);
+int dsp_D2Cparams_init(ObTofDspParams *ObfDspParams, Depth2Color_pixFormat pixFormat,
+                       bool d2c_enable, softfilterParam softfilter_param);
 int ar_load_file(char *path, char *buf, int size);
 
 #ifdef __cplusplus

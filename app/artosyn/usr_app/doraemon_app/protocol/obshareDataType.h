@@ -97,6 +97,8 @@ typedef enum{
 	OB_DEVICE_PROPERTY_ID_DEPTH_MAX_SPECKLE_SIZE,                    // soft filter maxSpeckleSize
     OB_DEVICE_PROPERTY_ID_DEPTH_ALIGN_HARDWARE,                      // 硬件d2c开关
 
+    OB_DEVICE_PROPERTY_ID_TIMESTEMP_OFFSET               = 0x00032,  // RGB时间戳偏移设置
+
     OB_DEVICE_PROPERTY_ID_ENABLE_CALIBRATION = 0x1000,     //是否需要裁减rgb(用于工厂标定模式)
 
     //TOF设备属性相关
@@ -111,26 +113,35 @@ typedef enum{
     OB_DEVICE_PROPERTY_ID_TOF_MEDIAN_FILTER = 0x10008,     // tof 中值波器开关
     OB_DEVICE_PROPERTY_ID_TOF_CONFIDENCE_FILTER = 0x10009, // tof 置信波器开关
     OB_DEVICE_PROPERTY_ID_TOF_SHUFFLE_MODE = 0x1000A,      // tof Phase Shuffle模式
+
+    OB_DEVICE_PROPERTY_ID_ADB_FUNCTION_CONTROL  = 0x20000,               //ADB调试功能开关
+    OB_DEVICE_PROPERTY_ID_REBOOT_DEVICE         = 0x20001,               //重启设备
+    OB_DEVICE_PROPERTY_ID_FACTORY_RESET         = 0x20002,               //恢复出产设置
+    OB_DEVICE_PROPERTY_ID_SET_FORCE_UPGRADE     = 0x20003,               //获取或设置设备强制升级模式
 } OBDevicePropertyID;
 
 //自定义数据枚举
 typedef enum {
-    OB_DATA_TYPE_VERSIONS = 1,                       // 版本信息
-    OB_DATA_TYPE_CAMERA_PARA,                        // 相机内外参数
-    OB_DATA_TYPE_BASELINE_CALIBRATION_PARA,          // 基线标定参数
-    OB_DATA_TYPE_MULTIPLE_DISTANCE_CALIBRATION_PARA, // 多距离标定参数
-    OB_DATA_TYPE_REFERENCE_IMAGE,                    // 参考图
-    OB_DATA_TYPE_HARDWARE_ALIGN_PARA,                // 硬件对齐参数
-    OB_DATA_TYPE_SOFTWARE_ALIGN_PARA,                // 软件对齐参数
-    OB_DATA_TYPE_HARDWARE_DISTORTION_PARA,           // 硬件去畸变参数
-    OB_DATA_TYPE_DEPTH_CONFIG_PARA,                  // Depth Config区
-    OB_DATA_TYPE_DEVICE_TEMPERATURE,                 // 设备温度信息
-    OB_DATA_TYPE_DEVICE_AE_PARAMS,                   // AE调试参数
-    OB_DATA_TYPE_EXTENSION_PARAMS,                   // 扩展参数
-    OB_DATA_TYPE_DEVICE_SERIAL_NUMBER,               // 序列号
-    OB_DATA_TYPE_DEVICE_UPGRADE_STATUS,              // 读固件升级进度信息
-    OB_DATA_TYPE_DEVICE_CALIBRATION_UPGRADE_STATUS,  // 读标定升级进度信息
-    OB_DATA_TYPE_DEVICE_FILE_TRAN_STATUS,            // 读取文件传输状态
+    OB_DATA_TYPE_VERSIONS                           = 0x00001,  // 版本信息
+    OB_DATA_TYPE_CAMERA_PARA                        = 0x00002,  // 相机内外参数
+    OB_DATA_TYPE_BASELINE_CALIBRATION_PARA          = 0x00003,  // 基线标定参数
+    OB_DATA_TYPE_MULTIPLE_DISTANCE_CALIBRATION_PARA = 0x00004,  // 多距离标定参数
+    OB_DATA_TYPE_REFERENCE_IMAGE                    = 0x00005,  // 参考图
+    OB_DATA_TYPE_HARDWARE_ALIGN_PARA                = 0x00006,  // 硬件对齐参数
+    OB_DATA_TYPE_SOFTWARE_ALIGN_PARA                = 0x00007,  // 软件对齐参数
+    OB_DATA_TYPE_HARDWARE_DISTORTION_PARA           = 0x00008,  // 硬件去畸变参数
+    OB_DATA_TYPE_DEPTH_CONFIG_PARA                  = 0x00009,  // Depth Config区
+    OB_DATA_TYPE_DEVICE_TEMPERATURE                 = 0x0000A,  // 设备温度信息
+    OB_DATA_TYPE_DEVICE_AE_PARAMS                   = 0x0000B,  // AE调试参数
+    OB_DATA_TYPE_EXTENSION_PARAMS                   = 0x0000C,  //扩展参数
+    OB_DATA_TYPE_DEVICE_SERIAL_NUMBER               = 0x0000D,  // 序列号
+
+    OB_DATA_TYPE_DEVICE_UPGRADE_STATUS              = 0x0000E,  //固件升级状态
+    OB_DATA_TYPE_DEVICE_CALIBRATION_UPGRADE_STATUS  = 0x0000F,  //标定文件升级状态
+    OB_DATA_TYPE_DEVICE_FILE_TRAN_STATUS            = 0x00010,  //文件传输状态
+
+    OB_DATA_TYPE_PTZ_CONTROL                 =0x1001,    // 云台控制
+    OB_DATA_TYPE_DIGITAL_ZOOM                =0x1002,    // 数字变焦
 
 
     //TOF自定义属性相关
@@ -147,6 +158,8 @@ typedef enum {
     OB_DATA_TYPE_TOF_MEDIAN_FILTER_PARA = 0x1000A,      // tof 中值滤波参数
     OB_DATA_TYPE_TOF_CONFIDENCE_FILTER_PARA = 0x1000B,  // tof 置信滤波参数
     OB_DATA_TYPE_TOF_NEAREST_FARTHEST_LENGTH = 0x1000C, // tof 最近最远距离
+
+    OB_DATA_TYPE_DEVICE_STATE                =0x30000,  // 获取当前设备状态
 
     OB_DATA_TYPE_COUNT,
 } OBDataTypeID;
@@ -268,6 +281,16 @@ typedef struct PropertyVal {
     uint32_t def;
     uint32_t step;
 }PropertyVal;
+
+typedef struct _ob_ptz_control{
+    int enable;
+    int x;
+    int y;
+    int width;
+    int height;
+    float speed;
+}ob_ptz_control;
+
 
 typedef struct __attribute__((__packed__)) tof_temp {
     float tx_temp;     //摄氏度
@@ -420,6 +443,18 @@ typedef struct
     uint32_t d2c_16x9_valid;
     uint32_t reference_valid;
 } ConfigValidFlag;
+
+typedef enum {
+    NORMAL,
+    WARN,
+    FATAL,
+} ob_device_state_type;
+
+
+typedef struct {
+    ob_device_state_type type;  //设备状态类型
+    char msg[256];              //设备状态具体信息
+} ob_device_state;
 
 #ifdef __cplusplus
 }

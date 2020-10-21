@@ -20,7 +20,8 @@ SRCDIRS  += ./util \
             ./tof_dsp/Include \
             ./drivers \
             ./depth_process \
-            ./event			
+            ./event	\
+            ./wdt
 
 # Define flags
 #------------------------------------------
@@ -29,7 +30,7 @@ USR_LIB_PATH   =$(SDK_PATH)/lib/usr_lib
 KERNEK_MODULER =$(SDK_PATH)/kernel_module
 #STAGING_DIR    =$(SDK_PATH)/prebuild/staging
 
-USER_FLAGS += -mfpu=neon-vfpv4 -O3
+USER_FLAGS += -mfpu=neon-vfpv4 -O2
 USER_FLAGS += -DARIES_APP_VERSION=\"$(ARIES_APP_VERSION)\" \
               -DSDK_GIT_VERSION=\"$(SDK_GIT_VERSION)\"     \
               -DCOMPILE_TIME=\"$(COMPILE_TIME)\"  \
@@ -81,6 +82,7 @@ INCS     += -I./ \
             -I./tof_dsp/Include \
             -I./depth_process \
             -I./drivers/tof_sensor_lib \
+            -I./wdt \
             -I$(USR_LIB_PATH)/artosyn/inc/ion \
             -I$(USR_LIB_PATH)/avp_buffer/ar_video_stream \
             -I$(USR_LIB_PATH)/multimedia/pipeline_ctrl \
@@ -99,9 +101,10 @@ INCS     += -I./ \
             -I$(SDK_PATH)/kernel/mods/linux-linaro-stable-lsk-v4.9-17.07/drivers/media/platform/ar_cam/
 
 CFLAGS   += -DUSR_INCLUDE $(INCS) $(USER_FLAGS)
-CXXFLAGS += -std=gnu++11 -std=c++11 -std=gnu++11 -O3 -fopenmp $(INCS) $(USER_FLAGS)
+CXXFLAGS += -std=gnu++11 -std=c++11 -std=gnu++11 -O2 -fopenmp $(INCS) $(USER_FLAGS)
 
 LOCAL_LIB += ./lib/libyuv.a
+LOCAL_LIB += ./lib/libzlog.a
 LOCAL_LIB += -L./usb_bulk/libs -ltomcrypt -ltommath -luuid
 LOCAL_LIB += -L./lib/ -lobc_sl_drv -lpostfilter -lobrefparser
 

@@ -9,6 +9,8 @@
 #include "uvc_configfs.h"
 #include "logutil.h"
 
+#define RGB_UVC_BUFFER_QUEUE_NUM   (3)
+
 
 #if RGB_TIMESTAMP_FIXED_ENABLE
 void uvc_set_pts_bias(struct uvc_device *dev)
@@ -19,38 +21,67 @@ void uvc_set_pts_bias(struct uvc_device *dev)
         return;
     }
     
-    server_l->g_uvc_time_bias = 0;
+    server_l->g_uvc_time_bias = 60;
     
     if (V4L2_PIX_FMT_MJPEG == dev->fcc)
     {
-        if ((480 == dev->width && 640 == dev->height) || (720 == dev->width && 1280 == dev->height))
+        if ((480 == dev->width && 640 == dev->height) || (1280 == dev->height))
         {
-            server_l->g_uvc_time_bias = 15;
+            server_l->g_uvc_time_bias = 70;
         }
-        else if ((960 == dev->width && 1280 == dev->height) || (1080 == dev->width && 1920 == dev->height))
+        else if (1080 == dev->width && 1920 == dev->height)
         {
-            server_l->g_uvc_time_bias = 5;
+            server_l->g_uvc_time_bias = 70;
         }
     }
-    else if (V4L2_PIX_FMT_NV12 == dev->fcc)
+    else if (V4L2_PIX_FMT_YUV420 == dev->fcc)
     {
-        if ((1920 == dev->width && 1080 == dev->height) 
-            || (1280 == dev->width && 960 == dev->height)
-            || (1280 == dev->width && 720 == dev->height)
-            || (640 == dev->width && 480 == dev->height)
-            )
+        if (1280 == dev->width && 720 == dev->height) //客户需求: i420 720p
         {
-            server_l->g_uvc_time_bias = 50;
+            if (get_softfilter_status())
+                server_l->g_uvc_time_bias = 75;
+            else
+                server_l->g_uvc_time_bias = 90;
         }
     }
     else
     {
-        server_l->g_uvc_time_bias = 0;
+        server_l->g_uvc_time_bias = 70;
     }
 
-    INFO("xavier, set rgb timestamp bias:%dms\n", server_l->g_uvc_time_bias);
+    char *p = (char *)&dev->fcc;
+    INFO("xavier, set rgb timestamp bias:%d ms (%c%c%c%c %dx%d)\n", server_l->g_uvc_time_bias, p[0], p[1], p[2], p[3], dev->width, dev->height);
 }
 #endif
+
+
+/*****************************************************************************
+*   Prototype    : ob_uvc_rgb_stop_by_frame_drop_thd
+*   Description  : 检测连续丢帧进行主动停流, 适配插拔usb和第三方uvc播放器
+*   Input        : void *arg  
+*   Output       : None
+*   Return Value : static void *
+*   Calls        : 
+*   Called By    : 
+*****************************************************************************/
+static void *ob_uvc_rgb_stop_by_frame_drop_thd(void *arg)
+{
+    uvc_server_t *server_l = (uvc_server_t *)arg;  
+    
+    if (0 == pthread_mutex_trylock(&server_l->g_uvc_frame_drop_mutex))
+    {
+        server_l->g_stream_ctl_flag = STREAM_CTL_OFF;
+        INFO("frame drop trigger stop rgb uvc stream success!\n");
+
+        pthread_mutex_unlock(&server_l->g_uvc_frame_drop_mutex);
+    }
+    else
+    {
+        WARN("xavier, try lock failed!\n");
+    }
+
+    return NULL;
+}
 
 
 static int uvc_video_stream(struct uvc_device *dev, int enable)
@@ -78,10 +109,10 @@ static int uvc_video_stream(struct uvc_device *dev, int enable)
         buf.memory = V4L2_MEMORY_USERPTR;//V4L2_MEMORY_MMAP;
 
         buf.length = MAX_BUFFER_SIZE;
-        buf.bytesused = server_l->first_image_size;
+        buf.bytesused = 512;//server_l->first_image_size; //先发几帧512字节的空帧作为开始
         buf.m.userptr = (uint32_t)server_l->first_image_data;
 
-        INFO("Queueing buffer %u.\n", i);
+        //INFO("Queueing buffer %u.\n", i);
         if ((ret = ioctl(dev->fd, VIDIOC_QBUF, &buf)) < 0) 
         {
             ERR("Unable to queue buffer: %s (%d).\n", strerror(errno), errno);
@@ -119,7 +150,7 @@ static int uvc_video_reqbufs(struct uvc_device *dev, int nbufs)
         return ret;
     }
 
-    DBG("%u buffers allocated.\n\n", rb.count);
+    //DBG("%u buffers allocated.\n", rb.count);
     dev->nbufs = rb.count;
 
     return 0;
@@ -1261,6 +1292,7 @@ static void uvc_fill_streaming_control(struct uvc_device *dev,
         break;
     case V4L2_PIX_FMT_NV12:
     case V4L2_PIX_FMT_YUV420:
+    case V4L2_PIX_FMT_NV21:
         ctrl->dwMaxVideoFrameSize = frame->width * frame->height * 3 / 2;
         break;
     case V4L2_PIX_FMT_MJPEG:
@@ -1303,7 +1335,7 @@ static void uvc_events_process_streaming(struct uvc_device *dev, uint8_t req, ui
 {
     struct uvc_streaming_control *ctrl;
 
-    DBG("pid %d streaming request (req %02x cs %02x)\n", getpid(), req, cs);
+    //DBG("pid %d streaming request (req %02x cs %02x)\n", getpid(), req, cs);
 
     if (cs != UVC_VS_PROBE_CONTROL && cs != UVC_VS_COMMIT_CONTROL)
         return;
@@ -1745,7 +1777,7 @@ int uvc_video_set_format(struct uvc_device *dev)
     int ret = 0;
     char *p = (char *)&dev->fcc;
 
-    INFO("Setting format to 0x%08x(%c%c%c%c) %ux%u@%ufps\n", dev->fcc, p[0], p[1], p[2], p[3], dev->width, dev->height, 10000000/dev->frame_interval);
+    //INFO("Setting format to 0x%08x(%c%c%c%c) %ux%u@%ufps\n", dev->fcc, p[0], p[1], p[2], p[3], dev->width, dev->height, 10000000/dev->frame_interval);
 
 #if RGB_TIMESTAMP_FIXED_ENABLE
     /* 根据不同情况配置时间戳偏差值 */
@@ -1764,7 +1796,7 @@ int uvc_video_set_format(struct uvc_device *dev)
         fmt.fmt.pix.sizeimage = MAX_BUFFER_SIZE;//first_image_size * 3;//dev->imgsize * 2;
     if(dev->fcc == V4L2_PIX_FMT_YUYV)
         fmt.fmt.pix.sizeimage = dev->width * dev->height * 2;
-    if(dev->fcc == V4L2_PIX_FMT_NV12 || dev->fcc == V4L2_PIX_FMT_YUV420)
+    if(dev->fcc == V4L2_PIX_FMT_NV12 || dev->fcc == V4L2_PIX_FMT_YUV420 || dev->fcc == V4L2_PIX_FMT_NV21)
         fmt.fmt.pix.sizeimage = dev->width * dev->height * 3 / 2;
     if (dev->fcc == V4L2_PIX_FMT_H264)
         fmt.fmt.pix.sizeimage = MAX_BUFFER_SIZE;//first_image_size * 3;//dev->imgsize * 2;
@@ -1789,16 +1821,17 @@ static void uvc_events_process_data(struct uvc_device *dev, struct uvc_request_d
     unsigned int iformat;   //format index 从1开始
     unsigned int iframe;    //分辨率 index 从1开始
     unsigned int nframes;   //帧格式支持的分辨率个数
+    uvc_server_t *server_l = get_uvc_server();
 
     switch (dev->control) 
     {
         case UVC_VS_PROBE_CONTROL:
-            INFO("setting probe control, length = %d\n", data->length);
+            //INFO("setting probe control, length = %d\n", data->length);
             target = &dev->probe;
             break;
 
         case UVC_VS_COMMIT_CONTROL:
-            INFO("setting commit control, length = %d\n", data->length);
+            //INFO("setting commit control, length = %d\n", data->length);
             target = &dev->commit;
             break;
 
@@ -1823,8 +1856,7 @@ static void uvc_events_process_data(struct uvc_device *dev, struct uvc_request_d
 
 
     /* host端对device设置uvc数据格式和分辨率信息*/
-    
-    INFO("bFormatIndex:%d, bFrameIndex:%d, dwFrameInterval:%d\n", ctrl->bFormatIndex, ctrl->bFrameIndex, ctrl->dwFrameInterval);
+    //INFO("bFormatIndex:%d, bFrameIndex:%d, dwFrameInterval:%d\n", ctrl->bFormatIndex, ctrl->bFrameIndex, ctrl->dwFrameInterval);
 
 
     //[1] 获取当前host下发指定的帧格式信息
@@ -1843,9 +1875,7 @@ static void uvc_events_process_data(struct uvc_device *dev, struct uvc_request_d
     target->bFormatIndex = iformat; //帧格式索引
     target->bFrameIndex = iframe;   //分辨率索引
 
-    char *p = (char *)&(format->fcc);
-    INFO("format: %c%c%c%c (%d*%d)\n\n", p[0], p[1], p[2], p[3], frame->width, frame->height);
- 
+
     switch (format->fcc) 
     {
         case V4L2_PIX_FMT_YUYV:
@@ -1853,6 +1883,7 @@ static void uvc_events_process_data(struct uvc_device *dev, struct uvc_request_d
             break;
         case V4L2_PIX_FMT_NV12:
         case V4L2_PIX_FMT_YUV420:
+        case V4L2_PIX_FMT_NV21:
             target->dwMaxVideoFrameSize = frame->width * frame->height * 3 / 2;
             break;
         case V4L2_PIX_FMT_MJPEG:
@@ -1875,72 +1906,55 @@ static void uvc_events_process_data(struct uvc_device *dev, struct uvc_request_d
 
     if (dev->control == UVC_VS_COMMIT_CONTROL) 
     {
-        //dev->fcc = format->fcc;
-#ifdef UVC_FMT_CHANGE_TEST
-        for (i=0; i< 200; i++) {
-            uvc_pipeline_set_format(dev->width, dev->height, 10000000/target->dwFrameInterval);
-            if ((i%3) == 0) {
-                dev->width = 1920;
-                dev->height = 1080;
-            } else if ((i%3) == 1) {
-                dev->width = 640;
-                dev->height = 360;
-            } else {
-                dev->width = 1280;
-                dev->height = 720;
-            }
-        }
-#else
+        char *p = (char *)&(format->fcc);
+        INFO("xavier, uvc host request format: %c%c%c%c (%d*%d@%dfps)\n\n", p[0], p[1], p[2], p[3], frame->width, frame->height, 10000000/ctrl->dwFrameInterval);
+
+
+        pthread_mutex_lock(&server_l->g_uvc_frame_drop_mutex);
+
+        server_l->g_stream_ctl_flag = STREAM_CTL_ON;
+        server_l->frame_drop_flag = true;
+
         if (dev->width != frame->width || dev->height != frame->height || \
             dev->frame_interval != target->dwFrameInterval || \
             (dev->fcc != format->fcc || V4L2_PIX_FMT_H264 == dev->fcc || V4L2_PIX_FMT_HEVC == dev->fcc)) 
         {
-            uvc_server_t *server_l = get_uvc_server();
-
-            char *p = (char *)&format->fcc;
-            DBG("xavier, host set new Format: %c%c%c%c %ux%u@%ufps\n\n", p[0], p[1], p[2], p[3], frame->width, frame->height, 10000000/target->dwFrameInterval);
+            //char *p = (char *)&format->fcc;
+            //DBG("xavier, host set new Format: %c%c%c%c %ux%u@%ufps\n\n", p[0], p[1], p[2], p[3], frame->width, frame->height, 10000000/target->dwFrameInterval);
 
             dev->width          = frame->width;
             dev->height         = frame->height;
             dev->frame_interval = target->dwFrameInterval;
             dev->new_fcc        = format->fcc;
 
-            if(-1 == find_pra_index_by_name("-i", server_l->argc, server_l->argv)) {
-            	sem_wait(&server_l->g_chg_fmt_sem);//get lock
-                server_l->g_chg_fmt_flag = 1;
-            }
-
-            /*while(server_l->run_flag && server_l->status != UVC_STATUS_CHANGE_FORMAT)
-            {
-                usleep(1000);
-            }*/
-
-            //dev->fcc will be change in this function
-            //uvc_pipeline_set_format(dev->width, dev->height, 10000000/dev->frame_interval, format->fcc);
-        }
-#endif
-
-        //uvc_video_set_format(dev);
-        if (dev->bulk)
-        {
             uvc_server_t *server_l = get_uvc_server();
-            if(server_l->g_stream_on)
-            {
+            if(server_l->g_stream_on){
                 uvc_video_stream(dev, 0);
                 uvc_video_reqbufs(dev, 0);
             }
 
-            uvc_video_reqbufs(dev, 3);
-            while(server_l->run_flag &&
-              server_l->status != UVC_STATUS_CHANGE_FORMAT &&
-              server_l->g_chg_fmt_flag != 0)
-            {
-                usleep(1000);
+            INFO("trigger rgb format change.\n");
+            server_l->g_chg_fmt_flag = UVC_CHG_FMT_CHANGE; // ==> 触发分辨率或格式切换op: ob_rgb_get_stream_form_rtos: UVC_STATUS_RELEASE_FRAME
+            sem_wait(&server_l->g_chg_fmt_sem);            // <== 等待分辨率切换完成: ob_rgb_get_stream_form_rtos: UVC_STATUS_CHANGE_FORMAT
+            INFO("wait rgb format changed complete!\n"); 
+        }
+    
+        if (dev->bulk)
+        {
+            uvc_server_t *server_l = get_uvc_server();
+            if(server_l->g_stream_on){
+                uvc_video_stream(dev, 0);
+                uvc_video_reqbufs(dev, 0);
             }
 
-            uvc_video_stream(dev, 1);
+            uvc_video_reqbufs(dev, RGB_UVC_BUFFER_QUEUE_NUM);
+            uvc_video_stream(dev, 1); 
         }
+
+        pthread_mutex_unlock(&server_l->g_uvc_frame_drop_mutex);
     }
+
+    return;
 }
 
 
@@ -2065,6 +2079,7 @@ static void uvc_video_fill_buffer(struct uvc_device *dev, struct v4l2_buffer *bu
 
         case V4L2_PIX_FMT_NV12:
         case V4L2_PIX_FMT_YUV420:
+        case V4L2_PIX_FMT_NV21:
             bpl = dev->width * 3 / 2;
             buf->m.userptr = (uint32_t)dev->imgdata;
             buf->bytesused = bpl * dev->height;
@@ -2113,7 +2128,7 @@ int uvc_video_process(struct uvc_device *dev)
 #if RGB_TIMESTAMP_FIXED_ENABLE
     pts = dev->pts + server_l->g_uvc_time_bias;
 #else
-    pts = dev->pts
+    pts = dev->pts;
 #endif
     buf.timestamp.tv_sec  = pts / 1000;
     buf.timestamp.tv_usec = (pts % 1000) * 1000;
@@ -2134,28 +2149,181 @@ int uvc_video_send(struct uvc_device *dev, void * data, unsigned int len, unsign
 {
     int ret = -1;
     uvc_server_t *server_l = get_uvc_server();
-    pthread_mutex_lock(&server_l->g_wrt_com_mutex);
 
+    if (0 == server_l->g_stream_on || len <= 0)
+        return -1;
+ 
     dev->imgdata = data;
     dev->imgsize = len;
     dev->pts     = pts;
 
-    if (1 == server_l->g_stream_on && len > 0)
+    ret = select(dev->fd + 1, NULL, &wfds, NULL, &tv);//&wfds
+    if(ret > 0)
     {
-        ret = select(dev->fd + 1, NULL, &wfds, NULL, &tv);//&wfds
-        if(ret > 0)
+#if 0
+		//save yuyv
+        if (server_l->dev->fcc == V4L2_PIX_FMT_YUYV)
         {
-            ret = uvc_video_process(dev);
-            //usleep(len / 24);
+            char name[128];
+            memset(name, 0, sizeof(name));
+            ob_util_force_create_dir("/storage/YUYV/");
+            sprintf(name, "/storage/YUYV/%d_%d_%d_%d.yuyv", server_l->dev->pts, server_l->dev->width, server_l->dev->height, server_l->dev->frame_id);
+            ob_util_dumpToFile(dev->imgdata, dev->imgsize, name);
         }
-        else
+        else if (server_l->dev->fcc == V4L2_PIX_FMT_NV12)
         {
-            //WARN("RGB UVC: select time out (%d)\n", ret);
-            ret = -1;
+            char name[128];
+            memset(name, 0, sizeof(name));
+            ob_util_force_create_dir("/storage/NV12/");
+            sprintf(name, "/storage/NV12/%d_%d_%d_%d.nv12.y", server_l->dev->pts, server_l->dev->width, server_l->dev->height, server_l->dev->frame_id);
+            ob_util_dumpToFile(dev->imgdata, server_l->dev->width*server_l->dev->height, name);
         }
-    }
+        else if (server_l->dev->fcc == V4L2_PIX_FMT_YUV420)
+        {
+            char name[128];
+            memset(name, 0, sizeof(name));
+            ob_util_force_create_dir("/storage/I420/");
+            sprintf(name, "/storage/I420/%d_%d_%d_%d.i420", server_l->dev->pts, server_l->dev->width, server_l->dev->height, server_l->dev->frame_id);
+            ob_util_dumpToFile(dev->imgdata, server_l->dev->width*server_l->dev->height*3/2, name);
+        }
+        else if (server_l->dev->fcc == V4L2_PIX_FMT_MJPEG)
+        {
+            char name[128];
+            memset(name, 0, sizeof(name));
+            ob_util_force_create_dir("/storage/MJPEG/");
+            sprintf(name, "/storage/MJPEG/%d_%d_%d_%d.jpg", server_l->dev->pts, server_l->dev->width, server_l->dev->height, server_l->dev->frame_id);
+            ob_util_dumpToFile(dev->imgdata, dev->imgsize, name);
+        }
+        else if (server_l->dev->fcc == V4L2_PIX_FMT_H264) //V4L2_PIX_FMT_HEVC
+        {
+            ob_util_force_create_dir("/storage/H264/");
 
-    pthread_mutex_unlock(&server_l->g_wrt_com_mutex);
+            static unsigned int frame_save_count = 0;
+            static FILE *fp = NULL;
+            char name[128];
+            memset(name, 0, sizeof(name));
+            sprintf(name, "/storage/H264/%d_%d.h264", server_l->dev->width, server_l->dev->height);
+
+            if (0 == frame_save_count)
+            {
+                fp = fopen(name, "wb");
+                if (fp == NULL)
+                {
+                    ERR("open %s fail.\n", name);
+                    return -1;
+                }
+                INFO("open %s success!\n", name);
+            }
+
+            if (frame_save_count++ < 300)
+            {
+                if(1 != fwrite(dev->imgdata, dev->imgsize, 1, fp))
+                {
+                    ERR("fwrite failed.\n");
+                    return -1;
+                }
+            }
+
+            if (frame_save_count == 300)
+            {
+                if(NULL != fp)
+                {
+                    fflush(fp);
+                    fclose(fp);
+                    INFO("save %d frame success!\n", frame_save_count);
+                }
+            }
+
+        }
+        else if (server_l->dev->fcc == V4L2_PIX_FMT_HEVC)
+        {
+            ob_util_force_create_dir("/storage/H265/");
+
+            static unsigned int frame_save_count = 0;
+            static FILE *fp = NULL;
+            char name[128];
+            memset(name, 0, sizeof(name));
+            sprintf(name, "/storage/H265/%d_%d.h265", server_l->dev->width, server_l->dev->height);
+
+            if (0 == frame_save_count)
+            {
+                fp = fopen(name, "wb");
+                if (fp == NULL)
+                {
+                    ERR("open %s fail.\n", name);
+                    return -1;
+                }
+                INFO("open %s success!\n", name);
+            }
+
+            if (frame_save_count++ < 300)
+            {
+                if(1 != fwrite(dev->imgdata, dev->imgsize, 1, fp))
+                {
+                    ERR("fwrite failed.\n");
+                    return -1;
+                }
+            }
+
+            if (frame_save_count == 300)
+            {
+                if(NULL != fp)
+                {
+                    fflush(fp);
+                    fclose(fp);
+                    INFO("save %d frame success!\n", frame_save_count);
+                }
+            }
+
+        }
+#endif
+        //static unsigned int s_last_pts = 0;
+        //unsigned int deltT = server_l->dev->pts - s_last_pts;
+        //printf("rgb, id:%d, pts:%d(0x%x)(%d), size:%d\n", server_l->dev->frame_id, server_l->dev->pts+70, server_l->dev->pts+70, deltT, len);       
+        //if (deltT > 40)
+        //    printf("=======rgb frame drop========(%d, %d)\n", s_last_pts, server_l->dev->pts);
+        //s_last_pts = server_l->dev->pts;
+
+        //fix:the previous mjpeg frames were abnormal
+        if (server_l->dev->fcc == V4L2_PIX_FMT_MJPEG)
+        {
+            static unsigned int u32DropFrameNum = 0;
+            if (server_l->frame_drop_flag){
+                if (u32DropFrameNum < 5){ //drop previous 5 frame
+                    u32DropFrameNum++;
+                    return 0;
+                }else{
+                    server_l->frame_drop_flag = false;
+                    u32DropFrameNum = 0;
+                }
+            }   
+        }
+        else if (server_l->dev->fcc == V4L2_PIX_FMT_YUV420)
+        {
+            static unsigned int u32DropFrameNum = 0;
+            if (server_l->frame_drop_flag){
+                if (u32DropFrameNum < 2){
+                    u32DropFrameNum++;
+                    return 0;
+                }else{
+                    server_l->frame_drop_flag = false;
+                    u32DropFrameNum = 0;
+                }
+            }
+        }
+		
+        ret = uvc_video_process(dev);
+        server_l->u32FrameDropCount = 0;
+    }
+    else
+    {
+        //由于uvc bulk传输模式, host关流没有event到应用,所以这里检测连续丢N帧后主动停流
+        server_l->u32FrameDropCount++;
+        if (server_l->u32FrameDropCount == 20){
+            start_new_thread("drop streamon thread", NULL, ob_uvc_rgb_stop_by_frame_drop_thd, (void *)server_l);
+        }
+        ret = -1;
+    }
 
     return ret;
 }
@@ -2197,6 +2365,131 @@ void uvc_events_init(struct uvc_device *dev)
 
 int uvc_video_init(struct uvc_device *dev __attribute__((__unused__)))
 {
+    return 0;
+}
+
+
+/*****************************************************************************
+*   Prototype    : ob_rgb_stop_stream
+*   Description  : stop stream api
+*   Input        : void  
+*   Output       : None
+*   Return Value : int
+*****************************************************************************/
+int ob_rgb_stop_stream(void)
+{
+    uvc_server_t *server_l = get_uvc_server();
+    if (NULL == server_l){
+        ERR("param is error, server_l:%d\n", server_l);
+        return -1;
+    }
+
+    if (0 == pthread_mutex_trylock(&server_l->g_uvc_frame_drop_mutex))
+    {
+        server_l->g_stream_ctl_flag = STREAM_CTL_OFF;
+        INFO("stop rgb uvc stream success!\n");
+
+        pthread_mutex_unlock(&server_l->g_uvc_frame_drop_mutex);
+    }
+    else
+    {
+        WARN("xavier, try lock failed!\n");
+    }
+
+    return 0;
+}
+
+
+/*****************************************************************************
+*   Prototype    : ob_rgb_stream_switch
+*   Description  : x
+*   Input        : unsigned int fcc     eg: V4L2_PIX_FMT_YUV420          
+*                  unsigned int frame_interval  eg: 1000/33
+*   Output       : None
+*   Return Value : int
+*****************************************************************************/
+int ob_rgb_stream_switch(unsigned int fcc, unsigned int w, unsigned int h, unsigned int fps)
+{
+    uvc_server_t *pService = get_uvc_server();
+    if (NULL == pService){
+        ERR("server_l is NULL!\n");
+        return -1;
+    }
+
+    char *p = (char *)&fcc;
+    WARN("fcc:%c%c%c%c, w:%d, h:%d, fps:%d\n", p[0], p[1], p[2], p[3], w, h, fps);
+
+    if (0 == pthread_mutex_trylock(&pService->g_uvc_frame_drop_mutex))
+    {
+        pService->dev->width = w;
+        pService->dev->height = h;
+        pService->dev->frame_interval = 10000000/fps;
+        pService->dev->new_fcc = fcc;
+
+        //stram off
+        if(pService->g_stream_on){
+            uvc_video_stream(pService->dev, 0);
+            uvc_video_reqbufs(pService->dev, 0);
+        }
+
+        INFO("trigger rgb change.\n");
+        pService->g_chg_fmt_flag = UVC_CHG_FMT_CHANGE; // ==> 触发分辨率或格式切换op: ob_rgb_get_stream_form_rtos: UVC_STATUS_RELEASE_FRAME
+        sem_wait(&pService->g_chg_fmt_sem);            // <== 等待分辨率切换完成: ob_rgb_get_stream_form_rtos: UVC_STATUS_CHANGE_FORMAT
+        INFO("wait rgb format changed complete!\n"); 
+    
+        //stram off before stram on
+        if(pService->g_stream_on){
+            uvc_video_stream(pService->dev, 0);
+            uvc_video_reqbufs(pService->dev, 0);
+        }
+
+        //stram on
+        uvc_video_reqbufs(pService->dev, RGB_UVC_BUFFER_QUEUE_NUM);
+        uvc_video_stream(pService->dev, 1); 
+    
+        pthread_mutex_unlock(&pService->g_uvc_frame_drop_mutex);
+    }
+    else
+    {
+        WARN("xavier, try lock failed!\n");
+    }
+
+    return 0;
+}
+
+
+/*****************************************************************************
+*   Prototype    : ob_rgb_get_currrent_stream_param
+*   Description  : get stream param
+*   Input        : void *param  
+*   Output       : None
+*   Return Value : int
+*****************************************************************************/
+int ob_rgb_get_currrent_stream_param(void *param)
+{
+    ob_rgb_stream_param *pstParam = (ob_rgb_stream_param *)param;
+
+    uvc_server_t *pService = get_uvc_server();
+    if (NULL == pService){
+        ERR("server_l is NULL!\n");
+        return -1;
+    }  
+
+    if (NULL == pstParam){
+        ERR("pstParam is NULL!\n");
+        return -1;
+    }
+
+    pstParam->width = pService->dev->width;
+    pstParam->height = pService->dev->height;
+    pstParam->fps = 10000000 / pService->dev->frame_interval;
+    pstParam->fcc = pService->dev->fcc;
+    pstParam->is_streaming = (pService->g_stream_ctl_flag == STREAM_CTL_IDLE)?true:false;
+
+    char *p = (char *)&pstParam->fcc;
+    WARN("fcc:%c%c%c%c, w:%d, h:%d, fps:%d, is_streaming:%d\n", p[0], p[1], p[2], p[3], 
+        pstParam->width, pstParam->height, pstParam->fps, pstParam->is_streaming);
+
     return 0;
 }
 

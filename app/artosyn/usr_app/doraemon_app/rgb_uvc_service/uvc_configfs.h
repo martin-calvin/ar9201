@@ -24,6 +24,7 @@
 #define PATH_OF_STREAM_FORMAT_Y16   "/sys/kernel/config/usb_gadget/g1/functions/uvc.usb%d/streaming/header/h/y16"
 #define PATH_OF_STREAM_FORMAT_Y8    "/sys/kernel/config/usb_gadget/g1/functions/uvc.usb%d/streaming/header/h/y8"
 #define PATH_OF_STREAM_FORMAT_I420  "/sys/kernel/config/usb_gadget/g1/functions/uvc.usb%d/streaming/header/h/i420"
+#define PATH_OF_STREAM_FORMAT_NV21  "/sys/kernel/config/usb_gadget/g1/functions/uvc.usb%d/streaming/header/h/nv21"
 
 
 #define USB_HIGH_SPEED_BCD_USB      "0x0210"

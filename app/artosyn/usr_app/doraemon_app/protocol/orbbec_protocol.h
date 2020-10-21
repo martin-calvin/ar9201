@@ -79,7 +79,7 @@ typedef struct
 {
     uint16_t nMagic;   //发送时SDK填充0x4d47,固件填充0x4252再发出去
     uint16_t nSize;    //lenght(data)/2
-    uint16_t nOpcode;  //操作码
+    uint16_t nOpcode;  //操作码 EPsProtocolOpCodes
     uint16_t nId;      //当前传输的id, 发送出的id与响应的id要保持一致
 } ProtocolHeader;
 
